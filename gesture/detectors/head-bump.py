@@ -1,4 +1,4 @@
-""""Gesture recognition main module."""
+""""Gesture recognition for head bump"""
 
 import argparse
 import sys
@@ -119,7 +119,6 @@ class CustomSkeletonWidget(SkeletonGLWidget):
 
 class TDsender:
     """Simple OSC sender for TouchDesigner - NOT a QWidget."""
-
     def __init__(self, td_ip="127.0.0.1", td_port=7000):
         # Initialize OSC client for TouchDesigner
         self.td_ip = td_ip
@@ -151,7 +150,7 @@ def main():
         viewer_class=CustomSkeletonWidget,
         server_ip=args.server,
         server_port=args.port,
-        window_title="Head-Touch Detector"
+        window_title="Head-Bump Detector"
     )
 
     ok = client.run()
