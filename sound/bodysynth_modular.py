@@ -139,7 +139,7 @@ class BodysynthClient:
                         'wavetable': np.array([]),
                         'freq': 0,
                         'angle': 0,
-                        'vol': 0,
+                        'reverb': 0,
                         'skeleton': skeleton_joints,
                         'head_pos': head_pos,
                         'armline': arm['armlines']
@@ -150,7 +150,8 @@ class BodysynthClient:
                         gui_data['wavetable'] = wave_info[person_id]['wavetable']
                         gui_data['freq'] = wave_info[person_id]['freq']
                         gui_data['angle'] = wave_info[person_id]['angle']
-                        gui_data['vol'] = wave_info[person_id]['reverb']
+                        gui_data['reverb'] = wave_info[person_id]['reverb']
+                        gui_data['line_info'] = wave_info[person_id]['line_info']
                     
                     synth_voice_data[person_id] = gui_data
                 

@@ -15,11 +15,15 @@ from senseSpaceLib.senseSpace.enums import UniversalJoint
 SAMPLE_RATE = 44100
 CHANNELS = 2
 
-MAX_ARMLEN = 2000  # in mm
-MIN_ARMLEN = 1000  # in mm
+MAX_ARMLEN = 1200  # in mm
+MIN_ARMLEN = 450  # in mm
 MAX_FREQ = 320.0  # in Hz
 MIN_FREQ = 80.0   # in Hz
+
 AMPLITUDE_SCALE_FACTOR = 1.0
+
+MIN_REVERB_WET = 0.2  # Minimum reverb wetness (0.0-1.0)
+DISTORTION_AMOUNT = 0.3  # Soft saturation amount (0.0-1.0)
 
 
 class PyoWavetableVoice:
@@ -88,13 +92,33 @@ class WavetableSynth:
         
         print(f"[WavetableSynth] Initialized with gain={gain}, pre-created {max_voices} voices")
     
-    def best_fit_plane(self, points):
-        """Fit a plane to 3D points using SVD"""
-        centroid = points.mean(axis=0)
-        uu, dd, vv = np.linalg.svd(points - centroid)
-        normal = vv[2]
-        normal = normal / (np.linalg.norm(normal) + 1e-12)
-        return centroid, normal
+    def best_fit_line_xz(self, points):
+        """Fit a line to points in the XZ plane (ignoring Y coordinates)
+        
+        Returns:
+            tuple: (centroid, angle, direction_xz)
+                - centroid: (x, y, z) 3D centroid of all points
+                - angle: 0-90 degrees, angle of fitted line from X-axis
+                         0° = line along X (min reverb), 90° = line along Z (max reverb)
+                - direction_xz: (x, z) normalized direction of the fitted line in XZ plane
+        """
+        # Project points onto XZ plane
+        points_xz = points[:, [0, 2]]  # Take only X and Z coordinates
+        centroid = points.mean(axis=0)  # Full 3D centroid
+        centroid_xz = points_xz.mean(axis=0)
+        
+        # Fit line in XZ plane using SVD
+        uu, dd, vv = np.linalg.svd(points_xz - centroid_xz)
+        direction = vv[0]  # First component is the line direction (x, z)
+        
+        # Calculate angle of the line from X-axis in XZ plane
+        # atan2(z_component, x_component) gives angle from positive X-axis
+        angle_rad = math.atan2(abs(direction[1]), abs(direction[0]))  # Use abs to get 0-90° range
+        angle = math.degrees(angle_rad)
+        
+        # Now angle is 0° when line is along X, 90° when line is along Z
+        
+        return centroid, angle, direction
     
     def make_wavetable_mirror(self, arm_joints, sample_rate=SAMPLE_RATE):
         """Generate wavetable from arm geometry
@@ -103,7 +127,7 @@ class WavetableSynth:
             arm_joints: List of (x, y, z) tuples representing arm joint positions
         
         Returns:
-            tuple: (wavetable array, normal vector, frequency, angle)
+            tuple: (wavetable array, line_info dict, frequency, angle, horizontal_extent)
         """
         points = np.array(arm_joints, dtype=float)
         
@@ -114,19 +138,18 @@ class WavetableSynth:
         z_extent = float(points[:, 2].max() - points[:, 2].min())
         horizontal_extent = np.sqrt(x_extent**2 + z_extent**2)
         
-        clipped_x = np.clip(x_extent, MIN_ARMLEN, MAX_ARMLEN)
-        norm_x = float(np.clip((clipped_x - MIN_ARMLEN) / (MAX_ARMLEN - MIN_ARMLEN + 1e-12), 0.0, 1.0))
-        freq = MIN_FREQ + (1.0 - norm_x) * (MAX_FREQ - MIN_FREQ)
+        # Use horizontal_extent (combined X-Z spread) for frequency calculation
+        clipped_extent = np.clip(horizontal_extent, MIN_ARMLEN, MAX_ARMLEN)
+        norm_extent = float(np.clip((clipped_extent - MIN_ARMLEN) / (MAX_ARMLEN - MIN_ARMLEN + 1e-12), 0.0, 1.0))
+        freq = MIN_FREQ + (1.0 - norm_extent) * (MAX_FREQ - MIN_FREQ)
         
         table_len = max(3, int(round(sample_rate / freq)))
         
         coords = raw_coords - raw_coords[0]
         mirrored_coords = np.concatenate([coords, -coords[:0:-1]])
         
-        centroid = points.mean(axis=0)
-        uu, dd, vv = np.linalg.svd(points - centroid)
-        normal = vv[2]
-        normal = normal / (np.linalg.norm(normal) + 1e-12)
+        # Fit line in XZ plane only (top-down view)
+        centroid, angle, direction_xz = self.best_fit_line_xz(points)
         
         if np.ptp(mirrored_coords) > 1e-8 and horizontal_extent > 1e-8:
             scale_factor = (line_length / (horizontal_extent + 1e-8)) * AMPLITUDE_SCALE_FACTOR
@@ -140,19 +163,22 @@ class WavetableSynth:
         idx = np.linspace(0, len(mirrored_coords) - 1, table_len)
         wavetable = np.interp(idx, np.arange(len(mirrored_coords)), mirrored_coords).astype(np.float32)
         
-        # Calculate angle for reverb
-        first_joint = points[0]
-        last_joint = points[-1]
-        arm_direction_xz = np.array([last_joint[0] - first_joint[0], 0, last_joint[2] - first_joint[2]])
+        # Apply soft distortion/saturation using tanh
+        if DISTORTION_AMOUNT > 0:
+            drive = 1.0 + DISTORTION_AMOUNT * 3.0  # Map 0-1 to 1-4
+            wavetable = np.tanh(wavetable * drive) / np.tanh(drive)
         
-        if np.linalg.norm(arm_direction_xz) > 1e-6:
-            arm_direction_xz = arm_direction_xz / np.linalg.norm(arm_direction_xz)
-            angle = math.degrees(math.atan2(arm_direction_xz[2], arm_direction_xz[0]))
-            angle = abs(angle)
-        else:
-            angle = 0.0
+        # Angle is calculated from best_fit_line_xz (0-90° range)
+        # 0° = line along X-axis (horizontal) → min reverb
+        # 90° = line along Z-axis (perpendicular) → max reverb
         
-        return wavetable, normal, freq, angle
+        line_info = {
+            'centroid': centroid,
+            'direction': direction_xz,
+            'angle': angle
+        }
+        
+        return wavetable, line_info, freq, angle, horizontal_extent
     
     def process_frame(self, armline_data):
         """Process frame data and update wavetable voices
@@ -173,8 +199,15 @@ class WavetableSynth:
             # Convert armline joints to list of (x,y,z) tuples
             arm_joints = arm_data['armlines']
             
-            table, normal, freq, angle = self.make_wavetable_mirror(arm_joints)
-            reverb_amount = float(np.clip(angle / 180.0, 0.0, 1.0))
+            table, line_info, freq, angle, horizontal_extent = self.make_wavetable_mirror(arm_joints)
+            # Map angle (0-90°) to reverb range: MIN_REVERB_WET to 1.0
+            # 0° = line along X-axis (horizontal) → min reverb
+            # 90° = line along Z-axis (perpendicular to X) → max reverb
+            angle_normalized = float(np.clip(angle / 90.0, 0.0, 1.0))
+            reverb_amount = MIN_REVERB_WET + angle_normalized * (1.0 - MIN_REVERB_WET)
+            
+            # Debug output
+            #print(f"[WavetableSynth] Person {person_id}: horizontal_extent={horizontal_extent:.0f}mm, freq={freq:.1f}Hz, angle={angle:.1f}°, reverb={reverb_amount:.2f}")
             
             # Manage voices using pre-created pool
             with self.voices_lock:
@@ -197,7 +230,8 @@ class WavetableSynth:
                 'wavetable': table,
                 'freq': freq,
                 'angle': angle,
-                'reverb': reverb_amount
+                'reverb': reverb_amount,
+                'line_info': line_info
             }
         
         # Remove inactive voices - return them to pool

@@ -11,16 +11,20 @@ import math
 pg.setConfigOption('background', 'k')
 pg.setConfigOption('foreground', 'w')
 
-class AngleWidget(QWidget):
+class ReverbWidget(QWidget):
+    """Visual indicator for plane angle (0°=plane normal along X/min reverb, 90°=plane normal along Z/max reverb)"""
     def __init__(self, color='yellow'):
         super().__init__()
-        self.angle = 0.0
+        self.angle = 0.0  # Angle in degrees from plane normal (0-90)
+        self.reverb = 0.0  # Reverb wetness 0.0-1.0
         self.color = color
         self.setMinimumSize(50, 50)
         self.setMaximumSize(50, 50)
 
-    def set_angle(self, angle):
+    def set_angle_and_reverb(self, angle, reverb):
+        """Set plane angle (degrees, 0-90) and reverb wetness (0.0-1.0)"""
         self.angle = angle
+        self.reverb = reverb
         self.update()
 
     def paintEvent(self, event):
@@ -39,15 +43,19 @@ class AngleWidget(QWidget):
         center_y = height / 2
         length = min(width, height) / 2 * 0.8
 
-        # The angle is between the plane normal and the Z-axis (up).
-        # 0 degrees = horizontal plane, 90 degrees = vertical plane.
-        # We can draw a line from the center, where 0 degrees is up.
-        rad_angle = math.radians(self.angle - 90) # 0 degrees up
+        # Angle is already 0-90: 0° = horizontal (min reverb), 90° = vertical (max reverb)
+        rad_angle = math.radians(self.angle)
         
         end_x = center_x + length * math.cos(rad_angle)
-        end_y = center_y + length * math.sin(rad_angle)
+        end_y = center_y - length * math.sin(rad_angle)  # Negative because screen Y is inverted
 
         painter.drawLine(int(center_x), int(center_y), int(end_x), int(end_y))
+        
+        # Draw angle text
+        painter.setPen(QColor(self.color))
+        painter.setFont(QFont('Arial', 8))
+        text = f"{int(self.angle)}°"
+        painter.drawText(5, height - 5, text)
 
 class SkeletonWidget(QWidget):
     def __init__(self):
@@ -56,6 +64,7 @@ class SkeletonWidget(QWidget):
         self.setMaximumSize(100, 100)
         self.skeleton_data = None
         self.armline_data = None  # Store armline for projection calculation
+        self.line_info = None  # Store fitted line info for camera direction
         self.color = 'cyan'  # Default color
         
         # BODY_34 bone connections (joint index pairs)
@@ -74,13 +83,15 @@ class SkeletonWidget(QWidget):
             (26, 27), (26, 28), (26, 29), (28, 30), (29, 31),
         ]
         
-    def set_skeleton(self, joints, armline=None):
+    def set_skeleton(self, joints, armline=None, line_info=None):
         """
         joints: list of (x, y, z) tuples for all skeleton joints
         armline: list of (x, y, z) tuples for armline joints (for plane calculation)
+        line_info: dict with 'centroid', 'direction' (x,z), and 'angle' for camera view
         """
         self.skeleton_data = joints
         self.armline_data = armline
+        self.line_info = line_info
         self.update()
     
     def _best_fit_plane(self, points):
@@ -117,17 +128,24 @@ class SkeletonWidget(QWidget):
         
         skeleton_points = np.array(self.skeleton_data)
         
-        # If we have armline data, use it to calculate the projection plane
-        if self.armline_data and len(self.armline_data) >= 3:
+        # Use fitted line info to determine camera view if available
+        if self.line_info and self.armline_data and len(self.armline_data) >= 3:
             armline_points = np.array(self.armline_data)
             
-            # Validate armline points
-            if np.any(np.isnan(armline_points)) or np.any(np.isinf(armline_points)):
-                raise ValueError("Invalid armline data")
+            # Get line direction in XZ plane
+            line_direction_xz = self.line_info['direction']  # (x, z)
+            centroid = self.line_info['centroid']  # (x, y, z)
             
-            centroid, normal = self._best_fit_plane(armline_points)
+            # Camera views perpendicular to the line in XZ plane
+            # Normal to the line in XZ: rotate 90 degrees
+            normal_xz = np.array([-line_direction_xz[1], line_direction_xz[0]])  # Perpendicular in XZ
             
-            # Project skeleton onto the armline's plane
+            # Create 3D viewing direction (camera points towards skeleton from this direction)
+            # Normal points in XZ plane, Y component is 0
+            normal = np.array([normal_xz[0], 0, normal_xz[1]])
+            normal = normal / (np.linalg.norm(normal) + 1e-12)
+            
+            # Project skeleton onto plane perpendicular to viewing direction
             proj_skeleton = self._project_onto_plane(skeleton_points, centroid, normal)
             
             # Build in-plane basis with Y axis staying vertical
@@ -171,6 +189,48 @@ class SkeletonWidget(QWidget):
                     u = -u
             
             # Project skeleton points onto the u-v plane (2D coordinates)
+            points_2d = []
+            for p in proj_skeleton:
+                x_coord = np.dot(p - centroid, u)
+                y_coord = np.dot(p - centroid, v)
+                points_2d.append((x_coord, y_coord))
+        elif self.armline_data and len(self.armline_data) >= 3:
+            # Old behavior: use best fit plane through armline
+            armline_points = np.array(self.armline_data)
+            
+            if np.any(np.isnan(armline_points)) or np.any(np.isinf(armline_points)):
+                raise ValueError("Invalid armline data")
+            
+            centroid, normal = self._best_fit_plane(armline_points)
+            proj_skeleton = self._project_onto_plane(skeleton_points, centroid, normal)
+            
+            # Build in-plane basis with Y axis staying vertical
+            world_y = np.array([0, 1, 0])
+            v = world_y - np.dot(world_y, normal) * normal
+            v_norm = np.linalg.norm(v)
+            if v_norm < 1e-6:
+                proj_armline = self._project_onto_plane(armline_points, centroid, normal)
+                v = proj_armline[1] - proj_armline[0]
+                v_norm = np.linalg.norm(v)
+                if v_norm < 1e-6:
+                    raise ValueError("Cannot create basis")
+            v = v / v_norm
+            
+            u = np.cross(v, normal)
+            u_norm = np.linalg.norm(u)
+            if u_norm < 1e-6:
+                raise ValueError("Cannot create perpendicular basis")
+            u = u / u_norm
+            
+            proj_armline = self._project_onto_plane(armline_points, centroid, normal)
+            if len(proj_armline) >= 9:
+                left_wrist = proj_armline[0]
+                right_wrist = proj_armline[8]
+                left_u = np.dot(left_wrist - centroid, u)
+                right_u = np.dot(right_wrist - centroid, u)
+                if right_u < left_u:
+                    u = -u
+            
             points_2d = []
             for p in proj_skeleton:
                 x_coord = np.dot(p - centroid, u)
@@ -232,20 +292,24 @@ class HeadPositionWidget(QWidget):
         # No maximum size - let it expand
         self.head_positions = {}  # {person_id: (x, y, z)}
         self.armlines = {}  # {person_id: [(x,y,z), ...]}
+        self.fitted_lines = {}  # {person_id: {'centroid': (x,y,z), 'direction': (x,z), 'angle': float}}
         self.loop_position = 0.0  # 0.0 to 1.0
         self.num_lanes = num_lanes  # Number of sample lanes
         # Calibration space boundaries [x, z]
         self.top_left = top_left if top_left else [1000, 1000]
         self.bottom_right = bottom_right if bottom_right else [-1000, -1000]
         
-    def update_positions(self, positions_dict, armlines_dict=None):
+    def update_positions(self, positions_dict, armlines_dict=None, fitted_lines_dict=None):
         """
         positions_dict: {person_id: (x, y, z)}
         armlines_dict: {person_id: [(x,y,z), ...]} - list of joint positions
+        fitted_lines_dict: {person_id: {'centroid': (x,y,z), 'direction': (x,z), 'angle': float}}
         """
         self.head_positions = positions_dict
         if armlines_dict is not None:
             self.armlines = armlines_dict
+        if fitted_lines_dict is not None:
+            self.fitted_lines = fitted_lines_dict
         self.update()
     
     def update_loop_position(self, position):
@@ -261,22 +325,15 @@ class HeadPositionWidget(QWidget):
         height = self.height()
         margin = 20
         
-        # Determine number of lanes from number of people (if any)
+        # Fill entire background with dark gray
+        painter.fillRect(0, 0, width, height, QColor(30, 30, 30))
+        
+        # Dynamically determine number of lanes from number of people
         num_lanes = self.num_lanes  # Default
         if self.head_positions:
             valid_positions = {pid: pos for pid, pos in self.head_positions.items() if pos is not None}
             if valid_positions:
                 num_lanes = len(valid_positions)
-        
-        # Draw grid background
-        pen_grid = QPen(QColor(80, 80, 80), 1)
-        painter.setPen(pen_grid)
-        
-        # Draw horizontal lane dividers (num_lanes - 1 interior lines)
-        # This creates num_lanes regions between the top and bottom
-        for i in range(1, num_lanes):
-            y_pos = margin + i * (height - 2 * margin) / num_lanes
-            painter.drawLine(margin, int(y_pos), width - margin, int(y_pos))
         
         # Calculate calibration space boundaries
         min_x = self.bottom_right[0]
@@ -292,6 +349,16 @@ class HeadPositionWidget(QWidget):
         
         def coord_to_screen_z(z_coord):
             return height - margin - (z_coord - min_z) / range_z * (height - 2 * margin)
+        
+        # Draw grid background
+        pen_grid = QPen(QColor(80, 80, 80), 1)
+        painter.setPen(pen_grid)
+        
+        # Draw horizontal lane dividers (num_lanes - 1 interior lines)
+        # This creates num_lanes regions between the top and bottom
+        for i in range(1, num_lanes):
+            y_pos = margin + i * (height - 2 * margin) / num_lanes
+            painter.drawLine(margin, int(y_pos), width - margin, int(y_pos))
         
         # Draw grid lines with labels
         pen_grid = QPen(QColor(80, 80, 80), 1, Qt.PenStyle.DotLine)
@@ -323,6 +390,49 @@ class HeadPositionWidget(QWidget):
             # Label at left
             painter.setPen(QColor(200, 200, 200))
             painter.drawText(5, int(screen_z) + 4, f"{z}")
+        
+        # Draw colored lane backgrounds ON TOP of the grid (semi-transparent)
+        lane_colors = [
+            QColor(255, 80, 80, 100),   # Red with alpha (kick)
+            QColor(80, 255, 80, 100),   # Green with alpha (snare)
+            QColor(80, 120, 255, 100),  # Blue with alpha (cymbal)
+            QColor(255, 255, 80, 100),  # Yellow (extra lanes)
+            QColor(255, 80, 255, 100),  # Magenta (extra lanes)
+            QColor(80, 255, 255, 100),  # Cyan (extra lanes)
+        ]
+        
+        for lane_idx in range(num_lanes):
+            # Calculate Z boundaries for this lane in world coordinates
+            lane_width_z = range_z / num_lanes
+            lane_z_min = min_z + lane_idx * lane_width_z
+            lane_z_max = min_z + (lane_idx + 1) * lane_width_z
+            
+            # Convert to screen coordinates
+            screen_z_top = coord_to_screen_z(lane_z_max)
+            screen_z_bottom = coord_to_screen_z(lane_z_min)
+            
+            # Draw filled rectangle
+            color = lane_colors[lane_idx % len(lane_colors)]
+            rect_x = int(margin)
+            rect_y = int(screen_z_top)
+            rect_w = int(width - 2 * margin)
+            rect_h = int(screen_z_bottom - screen_z_top)
+            
+            painter.fillRect(rect_x, rect_y, rect_w, rect_h, color)
+            
+            # Draw lane label
+            lane_names = ['KICK', 'SNARE', 'CYMBAL', 'DRUM4', 'DRUM5', 'DRUM6']
+            lane_name = lane_names[lane_idx % len(lane_names)]
+            painter.setPen(QColor(255, 255, 255, 255))
+            painter.setFont(QFont('Arial', 18, QFont.Weight.Bold))
+            text_y = int((screen_z_top + screen_z_bottom) / 2) + 7
+            painter.drawText(int(margin + 10), text_y, f"Lane {lane_idx}: {lane_name}")
+            
+            # Draw Z range info
+            painter.setFont(QFont('Arial', 11))
+            painter.setPen(QColor(255, 255, 255, 220))
+            range_text = f"Z: {int(lane_z_min)} to {int(lane_z_max)}"
+            painter.drawText(int(margin + 10), text_y + 22, range_text)
         
         # Draw loop position bar (vertical line moving left to right)
         if self.loop_position >= 0:
@@ -408,6 +518,36 @@ class HeadPositionWidget(QWidget):
                     painter.drawEllipse(sjx - joint_radius, sjz - joint_radius, 
                                       joint_radius * 2, joint_radius * 2)
             
+            # Draw fitted line if available for this person (in top-down XZ plane)
+            if person_id in self.fitted_lines and self.fitted_lines[person_id]:
+                line_info = self.fitted_lines[person_id]
+                centroid = line_info['centroid']
+                direction = line_info['direction']  # (x, z) direction vector
+                
+                # Draw line extending from centroid in both directions
+                line_length = 400  # mm, extend in each direction
+                cx, cy, cz = centroid
+                dx, dz = direction
+                
+                # Start and end points of the fitted line
+                x1 = cx - dx * line_length
+                z1 = cz - dz * line_length
+                x2 = cx + dx * line_length
+                z2 = cz + dz * line_length
+                
+                sx1, sz1 = to_screen(x1, z1)
+                sx2, sz2 = to_screen(x2, z2)
+                
+                # Draw thick white dashed line
+                pen_fitted = QPen(QColor('white'), 4, Qt.PenStyle.DashLine)
+                painter.setPen(pen_fitted)
+                painter.drawLine(sx1, sz1, sx2, sz2)
+                
+                # Draw centroid as a small white square
+                scx, scz = to_screen(cx, cz)
+                painter.setBrush(QColor('white'))
+                painter.drawRect(scx - 4, scz - 4, 8, 8)
+            
             # Draw head position as larger circle
             painter.setPen(QPen(color, 2))
             painter.setBrush(color)
@@ -429,7 +569,7 @@ class VoiceWidget(QWidget):
         layout = QHBoxLayout()
         self.setLayout(layout)
 
-        # Layout: Skeleton, ID, Plot, Freq, Angle, Vol
+        # Layout: Skeleton, ID, Plot, Freq, Reverb
         self.skeleton_widget = SkeletonWidget()
         self.skeleton_widget.color = self.color  # Set skeleton color
         self.id_label = QLabel(f"Person: {self.voice_id}")
@@ -439,15 +579,15 @@ class VoiceWidget(QWidget):
         self.plot_curve = self.plot_widget.plot(pen=self.color)  # Use the voice color
         
         self.freq_label = QLabel("Freq: N/A")
-        self.angle_widget = AngleWidget(color=self.color)  # Pass color to angle widget
-        self.vol_label = QLabel("Vol: N/A")
+        self.reverb_widget = ReverbWidget(color=self.color)
+        self.reverb_label = QLabel("Reverb: N/A")
 
         layout.addWidget(self.skeleton_widget, stretch=1)
         layout.addWidget(self.id_label, stretch=1)
         layout.addWidget(self.plot_widget, stretch=4)
         layout.addWidget(self.freq_label, stretch=1)
-        layout.addWidget(self.angle_widget, stretch=1)
-        layout.addWidget(self.vol_label, stretch=1)
+        layout.addWidget(self.reverb_widget, stretch=1)
+        layout.addWidget(self.reverb_label, stretch=1)
 
 
     def update_data(self, data):
@@ -455,7 +595,8 @@ class VoiceWidget(QWidget):
             wavetable = data.get('wavetable', np.array([]))
             skeleton_joints = data.get('skeleton', [])
             armline_joints = data.get('armline', [])  # Get armline for projection
-            self.skeleton_widget.set_skeleton(skeleton_joints, armline_joints)
+            line_info = data.get('line_info')  # Get fitted line info for camera view
+            self.skeleton_widget.set_skeleton(skeleton_joints, armline_joints, line_info)
             
             # Add a point at y=0 at the end to complete the cycle
             if len(wavetable) > 0:
@@ -469,26 +610,27 @@ class VoiceWidget(QWidget):
             
             freq = data.get('freq', 0)
             angle = data.get('angle', 0)
-            vol = data.get('vol', 0)
+            reverb = data.get('reverb', 0)
             
             self.freq_label.setText(f"Freq: {freq:.1f} Hz" if freq > 0 else "Freq: N/A")
             
-            if angle is not None and angle > 0:
-                self.angle_widget.set_angle(angle)
+            if angle is not None and reverb is not None and reverb > 0:
+                self.reverb_widget.set_angle_and_reverb(angle, reverb)
+                self.reverb_label.setText(f"Reverb: {reverb:.2f}")
             else:
-                self.angle_widget.set_angle(0)
+                self.reverb_widget.set_angle_and_reverb(0, 0)
+                self.reverb_label.setText("Reverb: N/A")
                 
-            self.vol_label.setText(f"Vol: {vol:.2f}")
             self.id_label.setText(f"Person: {self.voice_id}")
         else:
             self.clear_data()
 
     def clear_data(self):
-        self.skeleton_widget.set_skeleton(None, None)
+        self.skeleton_widget.set_skeleton(None, None, None)
         self.plot_curve.setData(np.array([]))
         self.freq_label.setText("Freq: N/A")
-        self.angle_widget.set_angle(0)  # Changed from None to 0
-        self.vol_label.setText("Vol: N/A")
+        self.reverb_widget.set_angle_and_reverb(0, 0)
+        self.reverb_label.setText("Reverb: N/A")
         self.id_label.setText(f"Person: -")
 
 
@@ -529,9 +671,10 @@ class SynthMonitor(QMainWindow):
     def handle_update(self, all_voice_data):
         active_ids = list(all_voice_data.keys())
         
-        # Update head positions and armlines
+        # Update head positions, armlines, and fitted lines
         head_positions = {}
         armlines = {}
+        fitted_lines = {}
         for voice_id, data in all_voice_data.items():
             head_pos = data.get('head_pos')
             if head_pos:
@@ -539,7 +682,10 @@ class SynthMonitor(QMainWindow):
             armline = data.get('armline')
             if armline:
                 armlines[voice_id] = armline
-        self.head_widget.update_positions(head_positions, armlines)
+            line_info = data.get('line_info')
+            if line_info:
+                fitted_lines[voice_id] = line_info
+        self.head_widget.update_positions(head_positions, armlines, fitted_lines)
 
         # Update widgets with data
         for i in range(self.num_voices):

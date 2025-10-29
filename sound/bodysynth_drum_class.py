@@ -15,7 +15,7 @@ from senseSpaceLib.senseSpace.enums import UniversalJoint
 SAMPLE_RATE = 44100
 CHANNELS = 2
 LOOP_LENGTH = 2.4
-NUM_LANES = 3
+NUM_LANES = 1  # Set to 1 for kick only, 2 for kick+snare, 3 for kick+snare+cymbal
 
 TOP_LEFT = [-3000, 0]   # x,z in mm
 BOTTOM_RIGHT = [3000, -6000]  # x,z in mm
@@ -233,12 +233,23 @@ class DrumSequencer:
 
         self.debug_max_volume = True
         
-        # Define drum parameters for each lane
-        self.drum_params = [
+        # Define drum parameters for all possible drum types
+        all_drum_params = [
             {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': 0.2, 'tone': 0.3, 'decay_rate': 1.5},
             {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': 0.1, 'tone': 0.6, 'decay_rate': 1.2},
             {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': 0.0, 'tone': 0.7, 'decay_rate': 0.7}
         ]
+        
+        # Generate drum parameters for all lanes
+        # Cycle through available drum types if we have more lanes than drum types
+        self.drum_params = []
+        for lane_idx in range(num_lanes):
+            base_params = all_drum_params[lane_idx % len(all_drum_params)].copy()
+            # If we're cycling beyond the base types, modify frequency slightly for variety
+            if lane_idx >= len(all_drum_params):
+                cycle = lane_idx // len(all_drum_params)
+                base_params['base_freq'] *= (1.0 + cycle * 0.1)  # Increase pitch slightly
+            self.drum_params.append(base_params)
         
         # Generate samples and create voices
         self.click_sample = generate_click()
@@ -288,7 +299,53 @@ class DrumSequencer:
         y_normalized = (y - Y_MIN) / (Y_MAX - Y_MIN)
         volume = float(np.clip(y_normalized, 0.0, 1.0))
         
+        # Debug output
+        lane_width = (zmax - zmin) / self.num_lanes
+        
         return sample_idx, t_play, volume
+    
+    def update_num_lanes(self, new_num_lanes):
+        """Dynamically update the number of lanes and regenerate samples"""
+        if new_num_lanes == self.num_lanes:
+            return  # No change needed
+        
+        print(f"[DrumSequencer] Updating lanes from {self.num_lanes} to {new_num_lanes}")
+        
+        # Stop old voices
+        for voice in self.sample_voices.values():
+            voice.stop()
+        
+        self.num_lanes = new_num_lanes
+        self.sample_banks = {}
+        self.sample_voices = {}
+        
+        # Regenerate drum parameters for new number of lanes
+        all_drum_params = [
+            {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': 0.2, 'tone': 0.3, 'decay_rate': 1.5},
+            {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': 0.1, 'tone': 0.6, 'decay_rate': 1.2},
+            {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': 0.0, 'tone': 0.7, 'decay_rate': 0.7}
+        ]
+        
+        self.drum_params = []
+        for lane_idx in range(new_num_lanes):
+            base_params = all_drum_params[lane_idx % len(all_drum_params)].copy()
+            if lane_idx >= len(all_drum_params):
+                cycle = lane_idx // len(all_drum_params)
+                base_params['base_freq'] *= (1.0 + cycle * 0.1)
+            self.drum_params.append(base_params)
+        
+        # Regenerate samples and voices
+        for lane_idx in range(new_num_lanes):
+            params = self.drum_params[lane_idx]
+            self.sample_banks[lane_idx] = generate_drum_variant(**params)
+            self.sample_voices[lane_idx] = PyoSamplerVoice(
+                f"lane_{lane_idx}", 
+                self.sample_banks[lane_idx],
+                duration=params['duration'],
+                gain=1.0, 
+                server=self.pyo_server
+            )
+            print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz")
     
     def process_frame(self, head_positions):
         """Process frame data and trigger samples as needed
@@ -299,6 +356,11 @@ class DrumSequencer:
         Returns:
             dict: Current loop position and trigger info
         """
+        # Dynamically adjust number of lanes based on number of people
+        num_people = len(head_positions)
+        if num_people > 0 and num_people != self.num_lanes:
+            self.update_num_lanes(num_people)
+        
         if self.loop_start_time is None:
             self.loop_start_time = time.time()
         
