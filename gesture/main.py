@@ -23,6 +23,9 @@ from PyQt5.QtGui import QVector3D
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+# Add OSC import
+from pythonosc import udp_client
+
 
 def _person_key(person):
     """Stable key for a person object."""
@@ -49,22 +52,24 @@ def _get_head_pos(person: Person) -> QVector3D:
         return _qvec_from_pos(getattr(skel[head_idx], 'pos', None))
     
     return None
-
-
+ 
 class CustomSkeletonWidget(SkeletonGLWidget):
     """Detect head-to-head touch and log it."""
 
     def onInit(self):
         self._prev_touching = set()  # set of pair keys currently touching
         self._touch_threshold_mm = 300.0  # ~30cm between head centers
+        self.TDsender = TDsender("127.0.0.1", 8000)
 
     def onClose(self):
         pass
 
     def draw_custom(self, frame: Frame):
+        # self.TDsender.sendData("/test",0)
         """Detect touches and optionally draw markers."""
         if not hasattr(frame, 'people') or len(frame.people) < 2:
             self._prev_touching.clear()
+
             return
 
         # Build head positions for all people this frame
@@ -92,8 +97,9 @@ class CustomSkeletonWidget(SkeletonGLWidget):
                     # Use frame timestamp (seconds)
                     ts = getattr(frame, 'timestamp', time.time())
                     dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                    print(f"[HEAD-TOUCH] epoch={ts:.3f}s, time={dt}, people=({a_key},{b_key}), pos=({contact.x():.1f}, {contact.y():.1f}, {contact.z():.1f}) mm")
-
+                    data = f"[HEAD-TOUCH] epoch={ts:.3f}s, time={dt}, people=({a_key},{b_key}), pos=({contact.x():.1f}, {contact.y():.1f}, {contact.z():.1f}) mm"
+                    print(data)
+                    self.TDsender.sendData("/test",data)
                 # Optional: draw a small marker at contact point
                 try:
                     contact = (pa + pb) * 0.5
@@ -109,6 +115,25 @@ class CustomSkeletonWidget(SkeletonGLWidget):
 
         # Update for next frame
         self._prev_touching = current_touching
+        
+
+class TDsender:
+    """Simple OSC sender for TouchDesigner - NOT a QWidget."""
+
+    def __init__(self, td_ip="127.0.0.1", td_port=7000):
+        # Initialize OSC client for TouchDesigner
+        self.td_ip = td_ip
+        self.td_port = td_port
+        self.osc_client = udp_client.SimpleUDPClient(self.td_ip, self.td_port)
+        print(f"[OSC] Sending to TouchDesigner at {self.td_ip}:{self.td_port}")
+        
+    def sendData(self, address, data):
+        """Send OSC message to TouchDesigner."""
+        try:
+            self.osc_client.send_message(address, data)
+            print(f"[OSC] Sent to {address}: {data}")
+        except Exception as e:
+            print(f"[OSC] Error sending: {e}")
 
 
 def main():
@@ -117,13 +142,18 @@ def main():
     parser.add_argument("--port", "-p", type=int, default=12345, help="Server port")
     args = parser.parse_args()
 
+    # def create_widget(*widget_args, **widget_kwargs):
+    #     widget = CustomSkeletonWidget(*widget_args, **widget_kwargs)
+    #     widget.sender = sender  # Share the same sender instance
+    #     return widget
+
     client = VisualizationClient(
         viewer_class=CustomSkeletonWidget,
         server_ip=args.server,
         server_port=args.port,
         window_title="Head-Touch Detector"
     )
-    
+
     ok = client.run()
     sys.exit(0 if ok else 1)
 
