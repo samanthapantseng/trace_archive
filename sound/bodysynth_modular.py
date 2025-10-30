@@ -28,7 +28,7 @@ from bodysynth_wave_class import WavetableSynth
 from bodysynth_gui import SynthMonitor
 
 # --- Configuration ---
-SAMPLE_RATE = 44100
+AUDIO_DEVICE = 16
 CHANNELS = 2
 
 # GUI data
@@ -208,6 +208,7 @@ def main():
     drum_enabled = args.drum or args.all
     wave_enabled = args.wave or args.all
     gui_enabled = args.gui or args.all
+
     
     # If nothing specified, enable all by default
     if not (args.drum or args.wave or args.gui or args.all):
@@ -226,12 +227,21 @@ def main():
     
     # Initialize pyo audio server if any audio component is enabled
     pyo_server = None
+    actual_sample_rate = 44100
     if drum_enabled or wave_enabled:
-        s = Server(sr=SAMPLE_RATE, nchnls=CHANNELS, duplex=0)
-        s.setOutputDevice(3)
+        # Query the audio device to get its sample rate using pyo
+        device_index = AUDIO_DEVICE  # Your audio device
+        pa_get_devices_infos()
+        devices_info = pa_get_devices_infos()
+        device_info = devices_info[1][device_index]
+        actual_sample_rate = int(device_info['default sr'])
+        print(f"[INFO] Audio device {device_index} sample rate: {actual_sample_rate} Hz")
+            
+        s = Server(sr=actual_sample_rate, nchnls=CHANNELS, duplex=0)
+        s.setOutputDevice(AUDIO_DEVICE)
         s.boot().start()
         pyo_server = s
-        print("[INFO] Pyo audio server started on output device 3")
+        print(f"[INFO] Pyo audio server started on output device {AUDIO_DEVICE} at {actual_sample_rate} Hz")
     
     # Setup GUI first if enabled (before creating audio objects)
     monitor = None
@@ -242,10 +252,10 @@ def main():
     wavetable_synth = None
     
     if drum_enabled:
-        drum_sequencer = DrumSequencer(pyo_server, num_lanes=NUM_LANES, loop_length=LOOP_LENGTH)
+        drum_sequencer = DrumSequencer(pyo_server, num_lanes=NUM_LANES, loop_length=LOOP_LENGTH, channels=CHANNELS)
     
     if wave_enabled:
-        wavetable_synth = WavetableSynth(pyo_server, gain=0.3)
+        wavetable_synth = WavetableSynth(pyo_server, gain=0.3, sample_rate=actual_sample_rate, channels=CHANNELS)
     
     # Create client
     bodysynth_client = BodysynthClient(drum_enabled=drum_enabled, 
@@ -290,8 +300,9 @@ def main():
         
         monitor.show()
         
-        # Track loop start time for GUI
+        # Track loop start time and length for GUI
         gui_loop_start_time = time.time()
+        current_loop_length = [LOOP_LENGTH]  # Use list to make it mutable in closure
         
         def update_gui():
             with data_lock:
@@ -303,8 +314,33 @@ def main():
             else:
                 elapsed = time.time() - gui_loop_start_time
             
-            loop_position = (elapsed % LOOP_LENGTH) / LOOP_LENGTH
+            loop_position = (elapsed % current_loop_length[0]) / current_loop_length[0]
             monitor.head_widget.update_loop_position(loop_position)
+        
+        def on_loop_length_changed(new_length):
+            """Handle loop length changes from GUI"""
+            current_loop_length[0] = new_length
+            if drum_enabled and drum_sequencer:
+                drum_sequencer.loop_length = new_length
+                # Reset loop timing
+                drum_sequencer.loop_start_time = time.time()
+                drum_sequencer.triggered_this_loop.clear()
+                print(f"[INFO] Loop length changed to {new_length:.1f}s")
+        
+        def on_scale_changed(scale_name):
+            """Handle scale changes from GUI"""
+            if wave_enabled and wavetable_synth:
+                wavetable_synth.set_scale(scale_name)
+        
+        def on_click_changed(enabled):
+            """Handle click enable/disable from GUI"""
+            if drum_enabled and drum_sequencer:
+                drum_sequencer.set_click_enabled(enabled)
+        
+        # Connect GUI signals
+        monitor.loop_length_changed.connect(on_loop_length_changed)
+        monitor.scale_changed.connect(on_scale_changed)
+        monitor.click_enabled_changed.connect(on_click_changed)
         
         timer = QTimer()
         timer.timeout.connect(update_gui)

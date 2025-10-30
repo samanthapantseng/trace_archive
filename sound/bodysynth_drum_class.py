@@ -193,11 +193,12 @@ def generate_drum_variant(base_freq: float, duration: float, drum_type: str = 'k
 
 class PyoSamplerVoice:
     """Pyo-based one-shot sample player using TrigEnv for reliable triggering"""
-    def __init__(self, voice_id, buffer: np.ndarray, duration: float, gain: float = 1.0, server=None):
+    def __init__(self, voice_id, buffer: np.ndarray, duration: float, gain: float = 1.0, server=None, channels: int = 2):
         self.id = voice_id
         self.lock = threading.Lock()
         self.buffer = buffer
         self.duration = duration
+        self.channels = channels
         
         self.table = DataTable(size=len(buffer), init=buffer.tolist())
         
@@ -207,7 +208,9 @@ class PyoSamplerVoice:
         # TrigEnv plays the sample once when triggered
         # Initialize with mul=0 to prevent any sound on creation
         self.player = TrigEnv(self.trig, table=self.table, dur=duration, mul=0.0)
-        self.player.out()
+        # Output to all channels using Pan to duplicate to multi-channel
+        self.stereo = Pan(self.player, outs=self.channels, pan=0.5)
+        self.stereo.out()
         
         # Store the desired gain for later
         self.current_gain = gain
@@ -219,16 +222,18 @@ class PyoSamplerVoice:
             self.trig.play()
     
     def stop(self):
+        self.stereo.stop()
         self.player.stop()
 
 
 class DrumSequencer:
     """Spatial drum sequencer that triggers samples based on head position"""
     
-    def __init__(self, pyo_server, num_lanes=NUM_LANES, loop_length=LOOP_LENGTH):
+    def __init__(self, pyo_server, num_lanes=NUM_LANES, loop_length=LOOP_LENGTH, channels=2):
         self.pyo_server = pyo_server
         self.num_lanes = num_lanes
         self.loop_length = loop_length
+        self.channels = channels
         
         
         self.loop_start_time = None
@@ -258,7 +263,7 @@ class DrumSequencer:
         # Generate samples and create voices
         self.click_sample = generate_click()
         self.click_duration = len(self.click_sample) / SAMPLE_RATE
-        self.click_voice = PyoSamplerVoice("click", self.click_sample, duration=self.click_duration, gain=1.0, server=pyo_server)
+        self.click_voice = PyoSamplerVoice("click", self.click_sample, duration=self.click_duration, gain=1.0, server=pyo_server, channels=self.channels)
         
         self.sample_banks = {}
         self.sample_voices = {}
@@ -271,13 +276,23 @@ class DrumSequencer:
                 self.sample_banks[lane_idx],
                 duration=params['duration'],
                 gain=1.0, 
-                server=pyo_server
+                server=pyo_server,
+                channels=self.channels
             )
             print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz, duration={params['duration']}s")
         
         if self.debug_max_volume:
             print("[DrumSequencer] DEBUG MODE: All samples will play at maximum volume")
+        
+        # Click enable/disable flag
+        self.click_enabled = True
+        
         print(f"[DrumSequencer] Initialized with {num_lanes} lanes")
+    
+    def set_click_enabled(self, enabled: bool):
+        """Enable or disable the metronome click"""
+        self.click_enabled = enabled
+        print(f"[DrumSequencer] Click {'enabled' if enabled else 'disabled'}")
     
     def quantize_z(self, z, zmin, zmax):
         """Map Z position to a lane index"""
@@ -350,7 +365,8 @@ class DrumSequencer:
                 self.sample_banks[lane_idx],
                 duration=params['duration'],
                 gain=1.0, 
-                server=self.pyo_server
+                server=self.pyo_server,
+                channels=self.channels
             )
             print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz")
     
@@ -384,8 +400,8 @@ class DrumSequencer:
             new_loop = True
             print(f"[DrumSequencer] NEW LOOP: {current_loop_count}")
             
-            # Trigger click
-            if self.click_voice:
+            # Trigger click if enabled
+            if self.click_enabled and self.click_voice:
                 self.click_voice.trigger_sample(0.8)
         
         # Process each person
