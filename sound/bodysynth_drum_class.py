@@ -201,12 +201,16 @@ class PyoSamplerVoice:
         
         self.table = DataTable(size=len(buffer), init=buffer.tolist())
         
-        # Use Trig for manual triggering
+        # Use Trig for manual triggering - start with mul=0 to prevent auto-trigger
         self.trig = Trig()
         
         # TrigEnv plays the sample once when triggered
-        self.player = TrigEnv(self.trig, table=self.table, dur=duration, mul=gain)
+        # Initialize with mul=0 to prevent any sound on creation
+        self.player = TrigEnv(self.trig, table=self.table, dur=duration, mul=0.0)
         self.player.out()
+        
+        # Store the desired gain for later
+        self.current_gain = gain
     
     def trigger_sample(self, gain: float):
         """Trigger the sample to play once with the given gain"""
@@ -311,6 +315,9 @@ class DrumSequencer:
         
         print(f"[DrumSequencer] Updating lanes from {self.num_lanes} to {new_num_lanes}")
         
+        # Clear trigger tracking to prevent immediate re-trigger
+        self.triggered_this_loop.clear()
+        
         # Stop old voices
         for voice in self.sample_voices.values():
             voice.stop()
@@ -358,8 +365,10 @@ class DrumSequencer:
         """
         # Dynamically adjust number of lanes based on number of people
         num_people = len(head_positions)
+        lanes_updated = False
         if num_people > 0 and num_people != self.num_lanes:
             self.update_num_lanes(num_people)
+            lanes_updated = True
         
         if self.loop_start_time is None:
             self.loop_start_time = time.time()
@@ -389,7 +398,10 @@ class DrumSequencer:
             if self.debug_max_volume:
                 volume = 1.0
             
-            if person_id not in self.triggered_this_loop:
+            # If lanes were just updated, mark as triggered only if we're past their trigger point
+            if lanes_updated and current_loop_position > person_loop_position:
+                self.triggered_this_loop.add(person_id)
+            elif person_id not in self.triggered_this_loop:
                 if current_loop_position > person_loop_position:
                     drum_name = self.drum_params[sample_idx]['drum_type']
                     print(f"[DrumSequencer] TRIGGER: person {person_id}, lane {sample_idx} ({drum_name}), vol {volume:.2f}")

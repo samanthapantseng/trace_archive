@@ -84,6 +84,10 @@ class BodysynthClient:
         self.drum_sequencer = None
         self.wavetable_synth = None
         
+        # Person debouncing: track last seen time for each person
+        self.person_last_seen = {}  # {person_id: timestamp}
+        self.debounce_time = 1  # 500ms debounce
+        
         print(f"[BodysynthClient] Initialized - Drum: {drum_enabled}, Wave: {wave_enabled}, GUI: {gui_enabled}")
     
     def set_drum_sequencer(self, drum_sequencer):
@@ -100,6 +104,27 @@ class BodysynthClient:
     def on_frame(self, frame: Frame):
         """Process incoming frame and dispatch to enabled components"""
         snap = extract_head_and_arm(frame)
+        
+        current_time = time.time()
+        
+        # Update last seen time for all currently detected people
+        active_ids = set([arm['p'] for arm in snap['armlines']])
+        for person_id in active_ids:
+            self.person_last_seen[person_id] = current_time
+        
+        # Determine which people to keep (currently active OR within debounce window)
+        kept_person_ids = set()
+        for person_id, last_seen in list(self.person_last_seen.items()):
+            time_since_seen = current_time - last_seen
+            if time_since_seen <= self.debounce_time:
+                kept_person_ids.add(person_id)
+            else:
+                # Remove from tracking after debounce period
+                del self.person_last_seen[person_id]
+        
+        # Filter snap data to only include kept people
+        snap['headpos'] = [h for h in snap['headpos'] if h['p'] in kept_person_ids]
+        snap['armlines'] = [a for a in snap['armlines'] if a['p'] in kept_person_ids]
         
         drum_info = None
         wave_info = {}
@@ -155,9 +180,8 @@ class BodysynthClient:
                     
                     synth_voice_data[person_id] = gui_data
                 
-                # Clean up inactive persons
-                active_ids = set([arm['p'] for arm in snap['armlines']])
-                inactive_ids = set(synth_voice_data.keys()) - active_ids
+                # Clean up inactive persons (those not in kept_person_ids)
+                inactive_ids = set(synth_voice_data.keys()) - kept_person_ids
                 for p_id in inactive_ids:
                     del synth_voice_data[p_id]
     
