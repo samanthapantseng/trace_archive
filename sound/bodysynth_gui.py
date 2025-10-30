@@ -1,5 +1,5 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QComboBox, QCheckBox
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 from PyQt6.QtCore import Qt
@@ -568,26 +568,34 @@ class VoiceWidget(QWidget):
     def initUI(self):
         layout = QHBoxLayout()
         self.setLayout(layout)
-
-        # Layout: Skeleton, ID, Plot, Freq, Reverb
+        
+        # Left side: Skeleton
         self.skeleton_widget = SkeletonWidget()
         self.skeleton_widget.color = self.color  # Set skeleton color
+        
+        # Middle: Column with ID, Freq, Reverb info
+        info_layout = QVBoxLayout()
+        
         self.id_label = QLabel(f"Person: {self.voice_id}")
+        self.freq_label = QLabel("Freq: N/A")
+        self.reverb_widget = ReverbWidget(color=self.color)
+        self.reverb_label = QLabel("Reverb: N/A")
+        
+        info_layout.addWidget(self.id_label)
+        info_layout.addWidget(self.freq_label)
+        info_layout.addWidget(self.reverb_widget)
+        info_layout.addWidget(self.reverb_label)
+        info_layout.addStretch()
+        
+        # Right side: Wavetable plot
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setYRange(-1.1, 1.1)
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_curve = self.plot_widget.plot(pen=self.color)  # Use the voice color
         
-        self.freq_label = QLabel("Freq: N/A")
-        self.reverb_widget = ReverbWidget(color=self.color)
-        self.reverb_label = QLabel("Reverb: N/A")
-
-        layout.addWidget(self.skeleton_widget, stretch=1)
-        layout.addWidget(self.id_label, stretch=1)
-        layout.addWidget(self.plot_widget, stretch=4)
-        layout.addWidget(self.freq_label, stretch=1)
-        layout.addWidget(self.reverb_widget, stretch=1)
-        layout.addWidget(self.reverb_label, stretch=1)
+        layout.addWidget(self.skeleton_widget, stretch=3)  # 30%
+        layout.addLayout(info_layout, stretch=1)  # 10%
+        layout.addWidget(self.plot_widget, stretch=6)  # 60%
 
 
     def update_data(self, data):
@@ -636,27 +644,82 @@ class VoiceWidget(QWidget):
 
 class SynthMonitor(QMainWindow):
     update_signal = pyqtSignal(dict)
+    loop_length_changed = pyqtSignal(float)  # Signal for loop length changes
+    scale_changed = pyqtSignal(str)  # Signal for scale changes
+    click_enabled_changed = pyqtSignal(bool)  # Signal for click enable/disable
     
     # Define colors for each voice (matches head position dots)
     VOICE_COLORS = ['red', 'green', 'blue', 'yellow', 'magenta', 'cyan']
 
-    def __init__(self, num_voices=6, num_lanes=3, top_left=None, bottom_right=None):
+    def __init__(self, num_voices=6, num_lanes=3, top_left=None, bottom_right=None, initial_loop_length=2.4):
         super().__init__()
         self.num_voices = num_voices
         self.setWindowTitle("Synth Monitor")
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         
-        # Main horizontal layout: voice widgets on left, head position on right
-        self.main_layout = QHBoxLayout(self.central_widget)
+        # Main vertical layout
+        main_v_layout = QVBoxLayout(self.central_widget)
         
-        # Left side: voice widgets in vertical layout
+        # Top: Controls (loop length slider and scale selector)
+        controls_layout = QHBoxLayout()
+        
+        # Loop length slider
+        loop_label = QLabel("Loop Length:")
+        self.loop_slider = QSlider(Qt.Orientation.Horizontal)
+        self.loop_slider.setMinimum(5)  # 0.5 seconds
+        self.loop_slider.setMaximum(100)  # 10 seconds
+        self.loop_slider.setValue(int(initial_loop_length * 10))  # 2.4s default
+        self.loop_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.loop_slider.setTickInterval(5)
+        self.loop_value_label = QLabel(f"{initial_loop_length:.1f}s")
+        self.loop_slider.valueChanged.connect(self._on_loop_slider_changed)
+        
+        controls_layout.addWidget(loop_label)
+        controls_layout.addWidget(self.loop_slider, stretch=2)
+        controls_layout.addWidget(self.loop_value_label)
+        
+        # Scale selector
+        scale_label = QLabel("Scale:")
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItems([
+            "Chromatic (None)",
+            "Major (Ionian)",
+            "Minor (Aeolian)",
+            "Dorian",
+            "Phrygian",
+            "Lydian",
+            "Mixolydian",
+            "Pentatonic Major",
+            "Pentatonic Minor",
+            "Blues",
+            "Whole Tone"
+        ])
+        self.scale_combo.currentTextChanged.connect(self._on_scale_changed)
+        
+        controls_layout.addWidget(scale_label)
+        controls_layout.addWidget(self.scale_combo, stretch=1)
+        
+        # Click enable checkbox
+        self.click_checkbox = QCheckBox("Click")
+        self.click_checkbox.setChecked(True)  # Enabled by default
+        self.click_checkbox.stateChanged.connect(self._on_click_changed)
+        controls_layout.addWidget(self.click_checkbox)
+        
+        main_v_layout.addLayout(controls_layout)
+        
+        # Bottom: Main content (voice widgets and head position)
+        self.main_layout = QHBoxLayout()
+        
+        # Left side: voice widgets in vertical layout (50%)
         self.voices_layout = QVBoxLayout()
-        self.main_layout.addLayout(self.voices_layout, stretch=4)
+        self.main_layout.addLayout(self.voices_layout, stretch=1)
         
-        # Right side: head position widget (sequencer)
+        # Right side: head position widget (sequencer) (50%)
         self.head_widget = HeadPositionWidget(num_lanes=num_lanes, top_left=top_left, bottom_right=bottom_right)
         self.main_layout.addWidget(self.head_widget, stretch=1)
+        
+        main_v_layout.addLayout(self.main_layout)
         
         self.voice_widgets = []
         
@@ -667,6 +730,21 @@ class SynthMonitor(QMainWindow):
             self.voices_layout.addWidget(widget)
 
         self.update_signal.connect(self.handle_update)
+    
+    def _on_loop_slider_changed(self, value):
+        """Handle loop length slider changes"""
+        loop_length = value / 10.0  # Convert to seconds
+        self.loop_value_label.setText(f"{loop_length:.1f}s")
+        self.loop_length_changed.emit(loop_length)
+    
+    def _on_scale_changed(self, scale_name):
+        """Handle scale selection changes"""
+        self.scale_changed.emit(scale_name)
+    
+    def _on_click_changed(self, state):
+        """Handle click checkbox changes"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.click_enabled_changed.emit(enabled)
 
     def handle_update(self, all_voice_data):
         active_ids = list(all_voice_data.keys())
