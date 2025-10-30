@@ -568,26 +568,34 @@ class VoiceWidget(QWidget):
     def initUI(self):
         layout = QHBoxLayout()
         self.setLayout(layout)
-
-        # Layout: Skeleton, ID, Plot, Freq, Reverb
+        
+        # Left side: Skeleton
         self.skeleton_widget = SkeletonWidget()
         self.skeleton_widget.color = self.color  # Set skeleton color
+        
+        # Middle: Column with ID, Freq, Reverb info
+        info_layout = QVBoxLayout()
+        
         self.id_label = QLabel(f"Person: {self.voice_id}")
+        self.freq_label = QLabel("Freq: N/A")
+        self.reverb_widget = ReverbWidget(color=self.color)
+        self.reverb_label = QLabel("Reverb: N/A")
+        
+        info_layout.addWidget(self.id_label)
+        info_layout.addWidget(self.freq_label)
+        info_layout.addWidget(self.reverb_widget)
+        info_layout.addWidget(self.reverb_label)
+        info_layout.addStretch()
+        
+        # Right side: Wavetable plot
         self.plot_widget = pg.PlotWidget()
         self.plot_widget.setYRange(-1.1, 1.1)
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_curve = self.plot_widget.plot(pen=self.color)  # Use the voice color
         
-        self.freq_label = QLabel("Freq: N/A")
-        self.reverb_widget = ReverbWidget(color=self.color)
-        self.reverb_label = QLabel("Reverb: N/A")
-
-        layout.addWidget(self.skeleton_widget, stretch=1)
-        layout.addWidget(self.id_label, stretch=1)
-        layout.addWidget(self.plot_widget, stretch=4)
-        layout.addWidget(self.freq_label, stretch=1)
-        layout.addWidget(self.reverb_widget, stretch=1)
-        layout.addWidget(self.reverb_label, stretch=1)
+        layout.addWidget(self.skeleton_widget, stretch=3)  # 30%
+        layout.addLayout(info_layout, stretch=1)  # 10%
+        layout.addWidget(self.plot_widget, stretch=6)  # 60%
 
 
     def update_data(self, data):
@@ -647,14 +655,14 @@ class SynthMonitor(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         
-        # Main horizontal layout: voice widgets on left, head position on right
+        # Main horizontal layout: voice widgets on left (50%), head position on right (50%)
         self.main_layout = QHBoxLayout(self.central_widget)
         
-        # Left side: voice widgets in vertical layout
+        # Left side: voice widgets in vertical layout (50%)
         self.voices_layout = QVBoxLayout()
-        self.main_layout.addLayout(self.voices_layout, stretch=4)
+        self.main_layout.addLayout(self.voices_layout, stretch=1)
         
-        # Right side: head position widget (sequencer)
+        # Right side: head position widget (sequencer) (50%)
         self.head_widget = HeadPositionWidget(num_lanes=num_lanes, top_left=top_left, bottom_right=bottom_right)
         self.main_layout.addWidget(self.head_widget, stretch=1)
         

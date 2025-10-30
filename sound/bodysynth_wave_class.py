@@ -27,38 +27,63 @@ DISTORTION_AMOUNT = 0.3  # Soft saturation amount (0.0-1.0)
 
 
 class PyoWavetableVoice:
-    """Pyo-based wavetable oscillator with reverb"""
+    """Pyo-based wavetable oscillator with reverb and LFO amplitude modulation"""
     def __init__(self, voice_id, table_data: np.ndarray, gain: float = 1.0, reverb_mix: float = 0.0):
         self.id = voice_id
         self.lock = threading.Lock()
         
+        # Audio wavetable
         self.table = DataTable(size=len(table_data), init=table_data.tolist())
         self.freq_ctrl = Sig(SAMPLE_RATE / len(table_data))
-        self.osc = Osc(table=self.table, freq=self.freq_ctrl, mul=gain)
         
-        # Create reverb effect - use simpler approach to avoid segfault
+        # LFO wavetable (same shape as audio, but much slower frequency)
+        self.lfo_table = DataTable(size=len(table_data), init=table_data.tolist())
+        audio_freq = SAMPLE_RATE / len(table_data)
+        lfo_freq = audio_freq / 100.0  # 100 times slower
+        
+        # LFO oscillator - output range needs to be 0 to 1 for amplitude modulation
+        # We'll scale and offset the LFO to be positive
+        self.lfo_osc = Osc(table=self.lfo_table, freq=lfo_freq, mul=0.5, add=0.5)
+        
+        # Audio oscillator modulated by LFO
+        self.osc = Osc(table=self.table, freq=self.freq_ctrl, mul=self.lfo_osc * gain)
+        
+        # Create reverb effect
         self.reverb_mix = Sig(reverb_mix)
         self.reverb = Freeverb(self.osc, size=0.8, damp=0.7, bal=self.reverb_mix)
         
         # Output the reverb
         self.reverb.out()
+        
+        self.base_gain = gain
     
     def update_table(self, new_table: np.ndarray):
         with self.lock:
-            # Create a new DataTable with the correct size
+            # Create a new DataTable with the correct size for audio
             old_table = self.table
             self.table = DataTable(size=len(new_table), init=new_table.tolist())
             
-            # Update the oscillator to use the new table
+            # Update the audio oscillator to use the new table
             self.osc.setTable(self.table)
             
             # Update frequency based on new table length
             new_freq = SAMPLE_RATE / len(new_table)
             self.freq_ctrl.value = new_freq
+            
+            # Also update LFO table with same waveform shape
+            old_lfo_table = self.lfo_table
+            self.lfo_table = DataTable(size=len(new_table), init=new_table.tolist())
+            self.lfo_osc.setTable(self.lfo_table)
+            
+            # Update LFO frequency (1000x slower than audio)
+            lfo_freq = new_freq / 1000.0
+            self.lfo_osc.setFreq(lfo_freq)
     
     def update_gain(self, new_gain: float):
         with self.lock:
-            self.osc.mul = new_gain
+            self.base_gain = new_gain
+            # Update the oscillator's mul - it's modulated by LFO
+            self.osc.mul = self.lfo_osc * new_gain
     
     def update_reverb(self, reverb_mix: float):
         with self.lock:
@@ -68,6 +93,7 @@ class PyoWavetableVoice:
     def stop(self):
         self.reverb.stop()
         self.osc.stop()
+        self.lfo_osc.stop()
 
 
 class WavetableSynth:
