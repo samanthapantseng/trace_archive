@@ -1,4 +1,4 @@
-""""Gesture recognition for head bump"""
+""""Gesture recognition for high five"""
 
 import argparse
 import sys
@@ -41,24 +41,24 @@ def _qvec_from_pos(pos) -> QVector3D:
     return QVector3D(float(pos["x"]), float(pos["y"]), float(pos["z"]))
 
 
-def _get_head_pos(person: Person) -> QVector3D:
+def _get_hand_pos(person: Person) -> QVector3D:
     """
-    Get the head position from joint #26 (HEAD).
+    Get the right hand position from joint #15 (hand).
     """
     skel = getattr(person, 'skeleton', None) or []
-    head_idx = 26  # J.HEAD
+    hand_idx = 15  # J right hand
     
-    if head_idx < len(skel):
-        return _qvec_from_pos(getattr(skel[head_idx], 'pos', None))
+    if hand_idx < len(skel):
+        return _qvec_from_pos(getattr(skel[hand_idx], 'pos', None))
     
     return None
  
 class CustomSkeletonWidget(SkeletonGLWidget):
-    """Detect head-to-head touch and log it."""
+    """Detect high five and log it."""
 
     def onInit(self):
         self._prev_touching = set()  # set of pair keys currently touching
-        self._touch_threshold_mm = 300.0  # ~30cm between head centers
+        self._touch_threshold_mm = 10.0  # ~10cm between head centers
         self.TDsender = TDsender("127.0.0.1", 8000)
 
     def onClose(self):
@@ -136,7 +136,7 @@ class TDsender:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Detect head-to-head touches and log events")
+    parser = argparse.ArgumentParser(description="Detect high fives and log events")
     parser.add_argument("--server", "-s", default="localhost", help="Server IP address")
     parser.add_argument("--port", "-p", type=int, default=12345, help="Server port")
     args = parser.parse_args()
@@ -150,7 +150,7 @@ def main():
         viewer_class=CustomSkeletonWidget,
         server_ip=args.server,
         server_port=args.port,
-        window_title="Head-Bump Detector"
+        window_title="High-Five Detector"
     )
 
     ok = client.run()
