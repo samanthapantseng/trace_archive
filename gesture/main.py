@@ -42,7 +42,7 @@ class CustomSkeletonWidget(SkeletonGLWidget):
         for detector in self.detectors:
             events = detector.process(frame, gl_context=True)
             for e in events:
-                msg = f"[{e['type'].upper()}] {e['time_str']} - {e['people']} - {e['pos']}"
+                msg = f"[{e['type'].upper()}] {e['time_str']} - {e['pos']}" # Add for people tag - {e['people']}
                 print(msg) #Print to console
                 self.sender.send(f"/{e['type']}", msg) #Send to TouchDesigner
 

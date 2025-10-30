@@ -59,7 +59,7 @@ class HeadBumpDetector:
                         "timestamp": ts,
                         "time_str": dt,
                         "people": pair,
-                        "pos": (contact.x(), contact.y(), contact.z())
+                        "pos": (int(contact.x()), int(contact.y()), int(contact.z()))
                     })
 
                 # Draw visual marker (safe because contact is always defined)
