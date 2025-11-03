@@ -13,6 +13,7 @@ from pythonosc import udp_client
 
 # Import detectors 
 from detectors.head_bump import HeadBumpDetector
+from detectors.high_five import HighFiveDetector
 
 class TDsender:
     def __init__(self, ip="127.0.0.1", port=7000):

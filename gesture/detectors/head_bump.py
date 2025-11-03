@@ -55,10 +55,10 @@ class HeadBumpDetector:
                     ts = getattr(frame, 'timestamp', time.time())
                     dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                     events.append({
-                        "type": "head_touch",
+                        "type": "head_bump",
                         "timestamp": ts,
                         "time_str": dt,
-                        "people": pair,
+                        #"people": pair,
                         "pos": (int(contact.x()), int(contact.y()), int(contact.z()))
                     })
 

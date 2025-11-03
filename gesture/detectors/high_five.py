@@ -1,161 +1,134 @@
 """"Gesture recognition for high five"""
 
-import argparse
-import sys
-import os
 import itertools
 import time
-from datetime import datetime
+from datetime import datetime# Transfer to TouchDesigner via OSC
 
-# Ensure local 'libs' folder is on sys.path when running from repo
-repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-libs_path = os.path.join(repo_root, 'libs')
-if os.path.isdir(libs_path) and libs_path not in sys.path:
-    sys.path.insert(0, libs_path)
-
-# Import from shared library
-from senseSpaceLib.senseSpace.vizClient import VisualizationClient  # noqa: E402
-from senseSpaceLib.senseSpace.protocol import Frame, Person         # noqa: E402
-from senseSpaceLib.senseSpace.vizWidget import SkeletonGLWidget     # noqa: E402
-from senseSpaceLib.senseSpace.enums import Body34Joint as J         # noqa: E402
+from senseSpaceLib.senseSpace.protocol import Frame, Person        
 
 from PyQt5.QtGui import QVector3D
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
-# Add OSC import
-from pythonosc import udp_client
+class HighFiveDetector:
+    """Detect high fives and log them (the hand to hand contact must be above shoulder level)"""
 
+    RIGHT_HAND = 15
+    LEFT_HAND = 8
+    RIGHT_SHOULDER = 12
+    LEFT_SHOULDER = 5
 
-def _person_key(person):
-    """Stable key for a person object."""
-    return getattr(person, 'id', getattr(person, 'track_id', id(person)))
-
-
-def _qvec_from_pos(pos) -> QVector3D:
-    """Convert Position or dict to QVector3D."""
-    if pos is None:
-        return None
-    if hasattr(pos, 'x'):
-        return QVector3D(float(pos.x), float(pos.y), float(pos.z))
-    return QVector3D(float(pos["x"]), float(pos["y"]), float(pos["z"]))
-
-
-def _get_hand_pos(person: Person) -> QVector3D:
-    """
-    Get the right hand position from joint #15 (hand).
-    """
-    skel = getattr(person, 'skeleton', None) or []
-    hand_idx = 15  # J right hand
-    
-    if hand_idx < len(skel):
-        return _qvec_from_pos(getattr(skel[hand_idx], 'pos', None))
-    
-    return None
- 
-class CustomSkeletonWidget(SkeletonGLWidget):
-    """Detect high five and log it."""
-
-    def onInit(self):
+    def __init__(self):
         self._prev_touching = set()  # set of pair keys currently touching
-        self._touch_threshold_mm = 10.0  # ~10cm between head centers
-        self.TDsender = TDsender("127.0.0.1", 8000)
+        self._touch_threshold_mm = 200.0  # ~20cm between hands
 
-    def onClose(self):
-        pass
-
-    def draw_custom(self, frame: Frame):
-        # self.TDsender.sendData("/test",0)
-        """Detect touches and optionally draw markers."""
+    def _get_joint_pos(self, person: Person, index: int):
+        """Extract joint position as QVector3D"""
+        skel = getattr(person, 'skeleton', None) 
+        if not skel or len(skel) <= index:
+            return None
+        pos = getattr(skel[index], 'pos', None)
+        if not pos:
+            return None
+        return QVector3D(float(pos.x), float(pos.y), float(pos.z))
+    
+    def _get_hand_pos(self, person: Person, side: str):
+        """Return left or right hand position"""
+        if side == "left":
+            return self._get_joint_pos(person, self.LEFT_HAND)
+        elif side == "right":
+            return self._get_joint_pos(person, self.RIGHT_HAND)
+        return None
+    
+    def _get_shoulder_pos(self, person: Person, side: str):
+        """Return left or right shoulder position"""
+        if side == "left":
+            return self._get_joint_pos(person, self.LEFT_SHOULDER)
+        elif side == "right":
+            return self._get_joint_pos(person, self.RIGHT_SHOULDER)
+        return None
+    
+    def process(self, frame: Frame, gl_context=None):
+        """"Detect high fives among people in frame"""
+        events = []
         if not hasattr(frame, 'people') or len(frame.people) < 2:
             self._prev_touching.clear()
-
-            return
-
-        # Build head positions for all people this frame
-        heads = {}  # key -> QVector3D
-        for person in frame.people:
-            key = _person_key(person)
-            hp = _get_head_pos(person)
-            if hp is not None:
-                heads[key] = hp
+            return events
+        
+        #Store hands
+        hands = {}
+        for p in frame.people:
+            pid = getattr(p, 'id', id(p))
+            hands[pid] = {
+                "left": self._get_hand_pos(p, "left"),
+                "right": self._get_hand_pos(p, "right"),
+                "left_shoulder": self._get_shoulder_pos(p, "left"),
+                "right_shoulder": self._get_shoulder_pos(p, "right"),
+            }
 
         current_touching = set()
 
-        # Check all unique pairs
-        for a_key, b_key in itertools.combinations(heads.keys(), 2):
-            pa = heads[a_key]
-            pb = heads[b_key]
-            # distance in mm
-            d = (pa - pb).length()
-            if d <= self._touch_threshold_mm:
-                pair = tuple(sorted((a_key, b_key)))
-                current_touching.add(pair)
-                # Rising edge: newly touching this frame
-                if pair not in self._prev_touching:
-                    contact = (pa + pb) * 0.5
-                    # Use frame timestamp (seconds)
-                    ts = getattr(frame, 'timestamp', time.time())
-                    dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                    data = f"[HEAD-TOUCH] epoch={ts:.3f}s, time={dt}, people=({a_key},{b_key}), pos=({contact.x():.1f}, {contact.y():.1f}, {contact.z():.1f}) mm"
-                    print(data)
-                    self.TDsender.sendData("/test",data)
-                # Optional: draw a small marker at contact point
-                try:
-                    contact = (pa + pb) * 0.5
-                    glPushMatrix()
-                    glTranslatef(contact.x(), contact.y(), contact.z())
-                    glColor4f(1.0, 0.6, 0.0, 0.8)  # orange
-                    quad = gluNewQuadric()
-                    gluSphere(quad, 60.0, 16, 16)
-                    gluDeleteQuadric(quad)
-                    glPopMatrix()
-                except Exception:
-                    pass
+        # Iterate over all pairs of people
+        for a, b in itertools.combinations(hands.keys(), 2):
+            pa, pb = hands[a], hands[b]
 
-        # Update for next frame
+            # All 4 combinations possible 
+            combos = [
+                ("left", "left"),
+                ("right", "right"),
+                ("left", "right"),
+                ("right", "left"),
+            ]
+
+            for side_a, side_b in combos:
+                ha = pa[side_a]
+                hb = pb[side_b]
+                sa = pa[f"{side_a}_shoulder"]
+                sb = pb[f"{side_b}_shoulder"]
+
+                #Ensure valid keypoints exist
+                if ha is None or hb is None or sa is None or sb is None:
+                    continue
+
+                #Both hands MUST be above their own shoulders
+                if not (ha.y() > sa.y() and hb.y() > sb.y()):
+                    continue
+
+                #Distance between hands
+                d = (ha - hb).length()
+                if d <= self._touch_threshold_mm:
+                    pair = tuple(sorted((a, b)))
+                    combo_tag = f"{side_a}-{side_b}"
+                    contact_id = (pair, combo_tag)
+                    current_touching.add(contact_id)
+
+                    #Average contact position
+                    contact = (ha + hb) * 0.5
+
+                    # Trigger only on new contact
+                    if contact_id not in self._prev_touching:
+                        ts = getattr(frame, 'timestamp', time.time())
+                        dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                        events.append({
+                            "type": "high_five",
+                            "timestamp": ts,
+                            "time_str": dt,
+                            "pos": (int(contact.x()), int(contact.y()), int(contact.z())),
+                            "detail": combo_tag,
+                        })
+
+                    # Draw visual marker
+                    if gl_context:
+                        try:
+                            glPushMatrix()
+                            glTranslatef(contact.x(), contact.y(), contact.z())
+                            glColor4f(0.2,0.6,1.0,0.9) #blue
+                            quad = gluNewQuadric()
+                            gluSphere(quad, 60.0, 16, 16)
+                            gluDeleteQuadric(quad)
+                            glPopMatrix()
+                        except Exception as e:
+                            print(f"[OpenGL error while drawing high five sphere] {e}")
+
         self._prev_touching = current_touching
-        
-
-class TDsender:
-    """Simple OSC sender for TouchDesigner - NOT a QWidget."""
-    def __init__(self, td_ip="127.0.0.1", td_port=7000):
-        # Initialize OSC client for TouchDesigner
-        self.td_ip = td_ip
-        self.td_port = td_port
-        self.osc_client = udp_client.SimpleUDPClient(self.td_ip, self.td_port)
-        print(f"[OSC] Sending to TouchDesigner at {self.td_ip}:{self.td_port}")
-        
-    def sendData(self, address, data):
-        """Send OSC message to TouchDesigner."""
-        try:
-            self.osc_client.send_message(address, data)
-            print(f"[OSC] Sent to {address}: {data}")
-        except Exception as e:
-            print(f"[OSC] Error sending: {e}")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Detect high fives and log events")
-    parser.add_argument("--server", "-s", default="localhost", help="Server IP address")
-    parser.add_argument("--port", "-p", type=int, default=12345, help="Server port")
-    args = parser.parse_args()
-
-    # def create_widget(*widget_args, **widget_kwargs):
-    #     widget = CustomSkeletonWidget(*widget_args, **widget_kwargs)
-    #     widget.sender = sender  # Share the same sender instance
-    #     return widget
-
-    client = VisualizationClient(
-        viewer_class=CustomSkeletonWidget,
-        server_ip=args.server,
-        server_port=args.port,
-        window_title="High-Five Detector"
-    )
-
-    ok = client.run()
-    sys.exit(0 if ok else 1)
-
-if __name__ == "__main__":
-    main()
-
+        return events
