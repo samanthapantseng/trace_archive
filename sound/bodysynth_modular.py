@@ -28,7 +28,7 @@ from bodysynth_wave_class import WavetableSynth
 from bodysynth_gui import SynthMonitor
 
 # --- Configuration ---
-AUDIO_DEVICE = 16
+AUDIO_DEVICE = 10
 CHANNELS = 2
 
 # GUI data
@@ -84,9 +84,10 @@ class BodysynthClient:
         self.drum_sequencer = None
         self.wavetable_synth = None
         
-        # Person debouncing: track last seen time for each person
+        # Person caching: track last seen time and data for each person
         self.person_last_seen = {}  # {person_id: timestamp}
-        self.debounce_time = 1  # 500ms debounce
+        self.person_cache = {}  # {person_id: {'headpos': ..., 'armline': ...}}
+        self.cache_time = 5.0  # Cache for 5 seconds
         
         print(f"[BodysynthClient] Initialized - Drum: {drum_enabled}, Wave: {wave_enabled}, GUI: {gui_enabled}")
     
@@ -107,24 +108,48 @@ class BodysynthClient:
         
         current_time = time.time()
         
-        # Update last seen time for all currently detected people
+        # Update last seen time and cache data for all currently detected people
         active_ids = set([arm['p'] for arm in snap['armlines']])
         for person_id in active_ids:
             self.person_last_seen[person_id] = current_time
+            
+            # Cache the person's data
+            headpos_data = next((h for h in snap['headpos'] if h['p'] == person_id), None)
+            armline_data = next((a for a in snap['armlines'] if a['p'] == person_id), None)
+            
+            self.person_cache[person_id] = {
+                'headpos': headpos_data,
+                'armline': armline_data
+            }
         
-        # Determine which people to keep (currently active OR within debounce window)
+        # Determine which people to keep (currently active OR within cache window)
         kept_person_ids = set()
+        cached_headpos = []
+        cached_armlines = []
+        
         for person_id, last_seen in list(self.person_last_seen.items()):
             time_since_seen = current_time - last_seen
-            if time_since_seen <= self.debounce_time:
+            if time_since_seen <= self.cache_time:
                 kept_person_ids.add(person_id)
+                
+                # Use cached data if person is not currently active
+                if person_id not in active_ids and person_id in self.person_cache:
+                    print(f"[BodysynthClient] Using CACHED data for person {person_id} (not seen for {time_since_seen:.2f}s)")
+                    cache = self.person_cache[person_id]
+                    if cache['headpos']:
+                        cached_headpos.append(cache['headpos'])
+                    if cache['armline']:
+                        cached_armlines.append(cache['armline'])
             else:
-                # Remove from tracking after debounce period
+                # Remove from tracking and cache after cache period
+                print(f"[BodysynthClient] REMOVING person {person_id} from cache (not seen for {time_since_seen:.2f}s)")
                 del self.person_last_seen[person_id]
+                if person_id in self.person_cache:
+                    del self.person_cache[person_id]
         
-        # Filter snap data to only include kept people
-        snap['headpos'] = [h for h in snap['headpos'] if h['p'] in kept_person_ids]
-        snap['armlines'] = [a for a in snap['armlines'] if a['p'] in kept_person_ids]
+        # Combine live and cached data
+        snap['headpos'] = [h for h in snap['headpos'] if h['p'] in kept_person_ids] + cached_headpos
+        snap['armlines'] = [a for a in snap['armlines'] if a['p'] in kept_person_ids] + cached_armlines
         
         drum_info = None
         wave_info = {}
@@ -231,8 +256,9 @@ def main():
     if drum_enabled or wave_enabled:
         # Query the audio device to get its sample rate using pyo
         device_index = AUDIO_DEVICE  # Your audio device
-        pa_get_devices_infos()
         devices_info = pa_get_devices_infos()
+        for key, value in devices_info[1].items():
+            print(f"{key}: {value}")
         device_info = devices_info[1][device_index]
         actual_sample_rate = int(device_info['default sr'])
         print(f"[INFO] Audio device {device_index} sample rate: {actual_sample_rate} Hz")
