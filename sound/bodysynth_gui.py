@@ -647,6 +647,8 @@ class SynthMonitor(QMainWindow):
     loop_length_changed = pyqtSignal(float)  # Signal for loop length changes
     scale_changed = pyqtSignal(str)  # Signal for scale changes
     click_enabled_changed = pyqtSignal(bool)  # Signal for click enable/disable
+    drum_gain_changed = pyqtSignal(float)  # Signal for drum gain changes
+    wave_gain_changed = pyqtSignal(float)  # Signal for wave gain changes
     
     # Define colors for each voice (matches head position dots)
     VOICE_COLORS = ['red', 'green', 'blue', 'yellow', 'magenta', 'cyan']
@@ -695,6 +697,7 @@ class SynthMonitor(QMainWindow):
             "Blues",
             "Whole Tone"
         ])
+        self.scale_combo.setCurrentText("Dorian")  # Set default to match WavetableSynth
         self.scale_combo.currentTextChanged.connect(self._on_scale_changed)
         
         controls_layout.addWidget(scale_label)
@@ -702,11 +705,46 @@ class SynthMonitor(QMainWindow):
         
         # Click enable checkbox
         self.click_checkbox = QCheckBox("Click")
-        self.click_checkbox.setChecked(True)  # Enabled by default
+        self.click_checkbox.setChecked(False)  # Disabled by default
         self.click_checkbox.stateChanged.connect(self._on_click_changed)
         controls_layout.addWidget(self.click_checkbox)
         
         main_v_layout.addLayout(controls_layout)
+        
+        # Gain controls row
+        gain_layout = QHBoxLayout()
+        
+        # Wave gain slider
+        wave_gain_label = QLabel("Wave Gain:")
+        self.wave_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_gain_slider.setMinimum(0)  # 0.0
+        self.wave_gain_slider.setMaximum(100)  # 1.0
+        self.wave_gain_slider.setValue(30)  # 0.3 default
+        self.wave_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.wave_gain_slider.setTickInterval(10)
+        self.wave_gain_value_label = QLabel("0.30")
+        self.wave_gain_slider.valueChanged.connect(self._on_wave_gain_changed)
+        
+        gain_layout.addWidget(wave_gain_label)
+        gain_layout.addWidget(self.wave_gain_slider, stretch=2)
+        gain_layout.addWidget(self.wave_gain_value_label)
+        
+        # Drum gain slider
+        drum_gain_label = QLabel("Drum Gain:")
+        self.drum_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.drum_gain_slider.setMinimum(0)  # 0.0
+        self.drum_gain_slider.setMaximum(100)  # 1.0
+        self.drum_gain_slider.setValue(80)  # 0.8 default
+        self.drum_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.drum_gain_slider.setTickInterval(10)
+        self.drum_gain_value_label = QLabel("0.80")
+        self.drum_gain_slider.valueChanged.connect(self._on_drum_gain_changed)
+        
+        gain_layout.addWidget(drum_gain_label)
+        gain_layout.addWidget(self.drum_gain_slider, stretch=2)
+        gain_layout.addWidget(self.drum_gain_value_label)
+        
+        main_v_layout.addLayout(gain_layout)
         
         # Bottom: Main content (voice widgets and head position)
         self.main_layout = QHBoxLayout()
@@ -745,6 +783,18 @@ class SynthMonitor(QMainWindow):
         """Handle click checkbox changes"""
         enabled = (state == Qt.CheckState.Checked.value)
         self.click_enabled_changed.emit(enabled)
+    
+    def _on_drum_gain_changed(self, value):
+        """Handle drum gain slider changes"""
+        gain = value / 100.0  # Convert to 0.0-1.0
+        self.drum_gain_value_label.setText(f"{gain:.2f}")
+        self.drum_gain_changed.emit(gain)
+    
+    def _on_wave_gain_changed(self, value):
+        """Handle wave gain slider changes"""
+        gain = value / 100.0  # Convert to 0.0-1.0
+        self.wave_gain_value_label.setText(f"{gain:.2f}")
+        self.wave_gain_changed.emit(gain)
 
     def handle_update(self, all_voice_data):
         active_ids = list(all_voice_data.keys())

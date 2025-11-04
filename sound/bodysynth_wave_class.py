@@ -15,16 +15,21 @@ from senseSpaceLib.senseSpace.enums import UniversalJoint
 SAMPLE_RATE = 44100
 CHANNELS = 2
 
-MAX_ARMLEN = 1200  # in mm
+MAX_ARMLEN = 2400  # in mm
 MIN_ARMLEN = 450  # in mm
-MAX_FREQ = 320.0  # in Hz
-MIN_FREQ = 80.0   # in Hz
+MAX_FREQ = 440.0  # in Hz
+MIN_FREQ = 22.5   # in Hz
 
 AMPLITUDE_SCALE_FACTOR = 1.0
 
-MIN_REVERB_WET = 0.5  # Minimum reverb wetness (0.0-1.0)
-DISTORTION_AMOUNT = 0.3  # Soft saturation amount (0.0-1.0)
-LFO_ENABLED = False  # Enable/disable LFO amplitude modulation
+MIN_REVERB_WET = 0.2  # Minimum reverb wetness (0.0-1.0)
+REVERB_SIZE = 0.9
+REVERB_DAMP = 0.9
+
+DISTORTION_AMOUNT = 0.0  # Soft saturation amount (0.0-1.0)
+
+LFO_AMOUNT = 0.2  # LFO amplitude modulation amount (0.0=off, 1.0=max influence)
+LFO_SLOWDOWN = 200.0
 
 # Musical scales (semitones from root note)
 SCALES = {
@@ -96,21 +101,20 @@ class PyoWavetableVoice:
         # LFO wavetable (same shape as audio, but much slower frequency)
         self.lfo_table = DataTable(size=len(table_data), init=table_data.tolist())
         audio_freq = SAMPLE_RATE / len(table_data)
-        lfo_freq = audio_freq / 100.0  # 100 times slower
+        lfo_freq = audio_freq / LFO_SLOWDOWN
         
         # LFO oscillator - output range needs to be 0 to 1 for amplitude modulation
         # We'll scale and offset the LFO to be positive
         self.lfo_osc = Osc(table=self.lfo_table, freq=lfo_freq, mul=0.5, add=0.5)
         
-        # Audio oscillator - modulated by LFO if enabled, otherwise constant gain
-        if LFO_ENABLED:
-            self.osc = Osc(table=self.table, freq=self.freq_ctrl, mul=self.lfo_osc * gain)
-        else:
-            self.osc = Osc(table=self.table, freq=self.freq_ctrl, mul=gain)
+        # Audio oscillator - modulated by LFO based on LFO_AMOUNT (0.0 to 1.0)
+        # Interpolate between constant gain (LFO_AMOUNT=0) and full LFO modulation (LFO_AMOUNT=1)
+        lfo_modulation = (1.0 - LFO_AMOUNT) + (self.lfo_osc * LFO_AMOUNT)
+        self.osc = Osc(table=self.table, freq=self.freq_ctrl, mul=lfo_modulation * gain)
         
         # Create reverb effect
         self.reverb_mix = Sig(reverb_mix)
-        self.reverb = Freeverb(self.osc, size=0.99, damp=0.99, bal=self.reverb_mix)
+        self.reverb = Freeverb(self.osc, size=REVERB_SIZE, damp=REVERB_DAMP, bal=self.reverb_mix)
         
         # Output the reverb to all channels
         # Use Pan to duplicate mono signal to multi-channel (pan=0.5 means center)
@@ -138,16 +142,15 @@ class PyoWavetableVoice:
             self.lfo_osc.setTable(self.lfo_table)
             
             # Update LFO frequency (1000x slower than audio)
-            lfo_freq = new_freq / 1000.0
+            lfo_freq = new_freq / LFO_SLOWDOWN
             self.lfo_osc.setFreq(lfo_freq)
     
     def update_gain(self, gain):
         self.gain = gain
-        # Update the oscillator multiplier - with LFO modulation if enabled
-        if LFO_ENABLED:
-            self.osc.mul = self.lfo_osc * self.gain
-        else:
-            self.osc.mul = self.gain
+        # Update the oscillator multiplier - with LFO modulation based on LFO_AMOUNT
+        # Interpolate between constant gain (LFO_AMOUNT=0) and full LFO modulation (LFO_AMOUNT=1)
+        lfo_modulation = (1.0 - LFO_AMOUNT) + (self.lfo_osc * LFO_AMOUNT)
+        self.osc.mul = lfo_modulation * self.gain
     
     def update_reverb(self, reverb_mix: float):
         with self.lock:
@@ -171,7 +174,7 @@ class WavetableSynth:
         self.channels = channels
         self.voices = {}
         self.voices_lock = threading.Lock()
-        self.current_scale = "Chromatic (None)"  # Default scale
+        self.current_scale = "Dorian"  # Default scale
         
         # Pre-create a pool of voices to avoid threading issues
         # Create dummy wavetable for initialization
@@ -235,11 +238,13 @@ class WavetableSynth:
         # Use horizontal_extent (combined X-Z spread) for frequency calculation
         clipped_extent = np.clip(horizontal_extent, MIN_ARMLEN, MAX_ARMLEN)
         norm_extent = float(np.clip((clipped_extent - MIN_ARMLEN) / (MAX_ARMLEN - MIN_ARMLEN + 1e-12), 0.0, 1.0))
-        freq = MIN_FREQ + (1.0 - norm_extent) * (MAX_FREQ - MIN_FREQ)
-        
+        # Exponential (musical) mapping: map normalized extent to frequency on a log scale
+        # Keep same endpoints: norm_extent=1 -> MIN_FREQ, norm_extent=0 -> MAX_FREQ
+        freq = MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** (1.0 - norm_extent))
+
         # Quantize frequency to selected scale
         quantized_freq = quantize_frequency_to_scale(freq, self.current_scale)
-        
+
         # Use quantized frequency for table length calculation
         table_len = max(3, int(round(self.sample_rate / quantized_freq)))
         
@@ -356,6 +361,16 @@ class WavetableSynth:
             print(f"[WavetableSynth] Scale changed to: {scale_name}")
         else:
             print(f"[WavetableSynth] Unknown scale: {scale_name}")
+    
+    def set_gain(self, gain: float):
+        """Set overall gain/volume for the wavetable synth"""
+        self.gain = gain
+        # Update all active voices
+        with self.voices_lock:
+            for person_id, voice_id in self.person_to_voice.items():
+                if voice_id in self.voice_pool:
+                    self.voice_pool[voice_id].update_gain(gain)
+        print(f"[WavetableSynth] Master gain set to {gain:.2f}")
     
     def stop(self):
         """Stop all voices"""

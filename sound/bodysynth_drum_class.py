@@ -17,6 +17,12 @@ CHANNELS = 2
 LOOP_LENGTH = 2.4
 NUM_LANES = 1  # Set to 1 for kick only, 2 for kick+snare, 3 for kick+snare+cymbal
 
+# Drum processing parameters
+DRUM_DISTORTION = 1.0  # Amount of distortion/saturation (0.0-1.0)
+DRUM_COMPRESSION = 1.0  # Amount of compression (0.0-1.0)
+COMPRESSION_THRESHOLD = 0.25  # Lower threshold = more compression (0.0-1.0)
+COMPRESSION_RATIO = 6.0  # Higher ratio = more aggressive compression (e.g., 6:1)
+
 TOP_LEFT = [-3000, 0]   # x,z in mm
 BOTTOM_RIGHT = [3000, -6000]  # x,z in mm
 Y_MAX = 2500
@@ -36,8 +42,42 @@ def generate_click():
     return click.astype(np.float32)
 
 
+def apply_compression(signal: np.ndarray, amount: float = 0.5, threshold: float = 0.5, ratio: float = 4.0):
+    """Apply dynamic range compression to a signal
+    
+    Args:
+        signal: Input audio signal
+        amount: Dry/wet mix (0.0 = no compression, 1.0 = full compression)
+        threshold: Compression threshold (0.0-1.0)
+        ratio: Compression ratio (e.g., 4.0 means 4:1 compression)
+    
+    Returns:
+        Compressed signal
+    """
+    if amount <= 0:
+        return signal
+    
+    # Simple compression algorithm
+    abs_signal = np.abs(signal)
+    compressed = signal.copy()
+    
+    # Apply compression to samples above threshold
+    mask = abs_signal > threshold
+    if np.any(mask):
+        # Calculate gain reduction
+        excess = abs_signal[mask] - threshold
+        compressed_excess = excess / ratio
+        # Apply gain reduction
+        gain = (threshold + compressed_excess) / abs_signal[mask]
+        compressed[mask] = signal[mask] * gain
+    
+    # Mix compressed and dry signal
+    return signal * (1.0 - amount) + compressed * amount
+
+
 def generate_drum_variant(base_freq: float, duration: float, drum_type: str = 'kick', 
-                         distortion: float = 0.0, tone: float = 0.5, decay_rate: float = 1.0):
+                         distortion: float = 0.0, tone: float = 0.5, decay_rate: float = 1.0,
+                         compression: float = 0.0):
     """Generate a drum sample with specified parameters
     
     Args:
@@ -47,6 +87,7 @@ def generate_drum_variant(base_freq: float, duration: float, drum_type: str = 'k
         distortion: Amount of distortion/saturation (0.0-1.0)
         tone: Tonal balance - lower = darker, higher = brighter (0.0-1.0)
         decay_rate: How fast the sound decays (0.5=slow, 1.0=normal, 2.0=fast)
+        compression: Amount of dynamic range compression (0.0-1.0)
     """
     sample_length = int(SAMPLE_RATE * duration)
     t = np.linspace(0, duration, sample_length)
@@ -171,11 +212,20 @@ def generate_drum_variant(base_freq: float, duration: float, drum_type: str = 'k
     if np.max(np.abs(synth)) > 0:
         synth = synth / np.max(np.abs(synth))
     
+    # Apply compression if requested (before distortion for more punch)
+    if compression > 0:
+        synth = apply_compression(synth, amount=compression, threshold=COMPRESSION_THRESHOLD, ratio=COMPRESSION_RATIO)
+    
     # Apply distortion/saturation if requested
     if distortion > 0:
-        # Soft clipping with tanh
-        drive = 1.0 + distortion * 4.0  # distortion 0-1 maps to drive 1-5
-        synth = np.tanh(synth * drive) / np.tanh(drive)
+        # More aggressive distortion with increased drive range
+        drive = 1.0 + distortion * 8.0  # distortion 0-1 maps to drive 1-9 (was 1-5)
+        
+        # Hard clipping stage for more aggressive distortion
+        synth = np.clip(synth * drive * 0.8, -1.0, 1.0)
+        
+        # Soft saturation with tanh for warmth
+        synth = np.tanh(synth * 1.5) / np.tanh(1.5)
     
     # RMS normalization - equalize energy per unit time
     # Calculate RMS only on the first 0.5s to avoid long tail affecting normalization
@@ -243,10 +293,11 @@ class DrumSequencer:
         self.debug_max_volume = False
         
         # Define drum parameters for all possible drum types
+        # Note: distortion and compression from global config will be added when generating samples
         all_drum_params = [
-            {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': 0.2, 'tone': 0.3, 'decay_rate': 1.5},
-            {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': 0.1, 'tone': 0.6, 'decay_rate': 1.2},
-            {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': 0.0, 'tone': 0.7, 'decay_rate': 0.7}
+            {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': DRUM_DISTORTION, 'tone': 0.3, 'decay_rate': 1.5, 'compression': DRUM_COMPRESSION},
+            {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': DRUM_DISTORTION, 'tone': 0.6, 'decay_rate': 1.2, 'compression': DRUM_COMPRESSION},
+            {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': DRUM_DISTORTION * 0.5, 'tone': 0.7, 'decay_rate': 0.7, 'compression': DRUM_COMPRESSION}
         ]
         
         # Generate drum parameters for all lanes
@@ -285,7 +336,10 @@ class DrumSequencer:
             print("[DrumSequencer] DEBUG MODE: All samples will play at maximum volume")
         
         # Click enable/disable flag
-        self.click_enabled = True
+        self.click_enabled = False
+        
+        # Master gain control
+        self.master_gain = 0.8
         
         print(f"[DrumSequencer] Initialized with {num_lanes} lanes")
     
@@ -293,6 +347,11 @@ class DrumSequencer:
         """Enable or disable the metronome click"""
         self.click_enabled = enabled
         print(f"[DrumSequencer] Click {'enabled' if enabled else 'disabled'}")
+    
+    def set_gain(self, gain: float):
+        """Set overall gain/volume for all drum samples"""
+        self.master_gain = gain
+        print(f"[DrumSequencer] Master gain set to {gain:.2f}")
     
     def quantize_z(self, z, zmin, zmax):
         """Map Z position to a lane index"""
@@ -402,7 +461,7 @@ class DrumSequencer:
             
             # Trigger click if enabled
             if self.click_enabled and self.click_voice:
-                self.click_voice.trigger_sample(0.8)
+                self.click_voice.trigger_sample(0.8 * self.master_gain)
         
         # Process each person
         for head in head_positions:
@@ -422,7 +481,7 @@ class DrumSequencer:
                     drum_name = self.drum_params[sample_idx]['drum_type']
                     print(f"[DrumSequencer] TRIGGER: person {person_id}, lane {sample_idx} ({drum_name}), vol {volume:.2f}")
                     if sample_idx in self.sample_voices:
-                        self.sample_voices[sample_idx].trigger_sample(volume)
+                        self.sample_voices[sample_idx].trigger_sample(volume * self.master_gain)
                         self.triggered_this_loop.add(person_id)
         
         self.last_loop_position = current_loop_position

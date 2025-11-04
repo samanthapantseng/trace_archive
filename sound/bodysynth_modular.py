@@ -31,6 +31,9 @@ from bodysynth_gui import SynthMonitor
 AUDIO_DEVICE = 10
 CHANNELS = 2
 
+MIN_CONFIDENCE = 70  # Minimum confidence to consider a person detected
+CACHE_TIME = 1.0   # Time in seconds to keep cached person data
+
 # GUI data
 synth_voice_data = {}
 data_lock = threading.Lock()
@@ -43,7 +46,7 @@ def extract_head_and_arm(frame):
     curr_armlines = []
     curr_headpos = []
     for person in frame.people:
-        if person.confidence > 70:
+        if person.confidence > MIN_CONFIDENCE:
             headpos = {'p': person.id, 'headpos': person.get_joint(UniversalJoint.NOSE, body_model)}
             curr_headpos.append(headpos)
             
@@ -87,7 +90,7 @@ class BodysynthClient:
         # Person caching: track last seen time and data for each person
         self.person_last_seen = {}  # {person_id: timestamp}
         self.person_cache = {}  # {person_id: {'headpos': ..., 'armline': ...}}
-        self.cache_time = 5.0  # Cache for 5 seconds
+        self.cache_time = CACHE_TIME  # Cache for 5 seconds
         
         print(f"[BodysynthClient] Initialized - Drum: {drum_enabled}, Wave: {wave_enabled}, GUI: {gui_enabled}")
     
@@ -134,7 +137,7 @@ class BodysynthClient:
                 
                 # Use cached data if person is not currently active
                 if person_id not in active_ids and person_id in self.person_cache:
-                    print(f"[BodysynthClient] Using CACHED data for person {person_id} (not seen for {time_since_seen:.2f}s)")
+                    #print(f"[BodysynthClient] Using CACHED data for person {person_id} (not seen for {time_since_seen:.2f}s)")
                     cache = self.person_cache[person_id]
                     if cache['headpos']:
                         cached_headpos.append(cache['headpos'])
@@ -363,10 +366,22 @@ def main():
             if drum_enabled and drum_sequencer:
                 drum_sequencer.set_click_enabled(enabled)
         
+        def on_drum_gain_changed(gain):
+            """Handle drum gain changes from GUI"""
+            if drum_enabled and drum_sequencer:
+                drum_sequencer.set_gain(gain)
+        
+        def on_wave_gain_changed(gain):
+            """Handle wave gain changes from GUI"""
+            if wave_enabled and wavetable_synth:
+                wavetable_synth.set_gain(gain)
+        
         # Connect GUI signals
         monitor.loop_length_changed.connect(on_loop_length_changed)
         monitor.scale_changed.connect(on_scale_changed)
         monitor.click_enabled_changed.connect(on_click_changed)
+        monitor.drum_gain_changed.connect(on_drum_gain_changed)
+        monitor.wave_gain_changed.connect(on_wave_gain_changed)
         
         timer = QTimer()
         timer.timeout.connect(update_gui)
