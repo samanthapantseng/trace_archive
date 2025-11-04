@@ -1,6 +1,8 @@
 """
 LLM-powered singing narrator for body synthesis
-Analyzes frames periodically, generates descriptions via LLM, and sings them with auto-tuned voice
+Pre-generates phrases on startup to avoid resource usage during runtime.
+All LLM generation and TTS synthesis happens during initialization or prompt changes.
+During playback, it cycles through pre-generated phrases with no CPU overhead.
 """
 
 import numpy as np
@@ -23,11 +25,16 @@ from ollamaClient import OllamaClient
 
 # --- Configuration ---
 DEFAULT_BASE_PROMPT = "You are an alchemist trying to find a dance to create a bad spell on a kingdom. Describe what you see in poetic, mystical terms in one short sentence."
-DEFAULT_GENERATION_INTERVAL = 30.0  # seconds
+DEFAULT_GENERATION_INTERVAL = 15.0  # seconds
 DEFAULT_AUTOTUNE_AMOUNT = 0.5  # 0.0-1.0
 DEFAULT_REVERB_AMOUNT = 0.7  # 0.0-1.0
 DEFAULT_GAIN = 0.6  # 0.0-1.0
+DEFAULT_TRANSPOSE = 0  # Octaves to transpose (-4 to 0)
 SAMPLE_RATE = 44100
+
+# Pre-generation settings
+NUM_PREGENERATED_PHRASES = 10  # How many phrases to pre-generate
+PREGENERATED_CACHE_DIR = "llm_singer_cache"  # Directory to store pre-generated audio
 
 # Musical scales (semitones from root)
 SCALES = {
@@ -53,6 +60,7 @@ class LLMSinger:
                  autotune_amount=DEFAULT_AUTOTUNE_AMOUNT,
                  reverb_amount=DEFAULT_REVERB_AMOUNT,
                  gain=DEFAULT_GAIN,
+                 transpose=DEFAULT_TRANSPOSE,
                  scale_name="Dorian",
                  channels=2,
                  on_lyrics_callback=None):
@@ -62,6 +70,7 @@ class LLMSinger:
         self.autotune_amount = autotune_amount
         self.reverb_amount = reverb_amount
         self.gain = gain
+        self.transpose = transpose  # Octaves to transpose
         self.current_scale = scale_name
         self.channels = channels
         self.on_lyrics_callback = on_lyrics_callback
@@ -73,9 +82,19 @@ class LLMSinger:
         self.llm_client = OllamaClient(model_name="llama3.2:1b")
         self.llm_ready = False
         
-        # Piper TTS settings
-        self.piper_model = "en_US-lessac-medium"
+        # Piper TTS settings - using male voice
+        self.piper_model = "en_US-danny-low"  # Male voice (Danny)
         self.piper_length_scale = 1.3  # 1.0 = normal speed, >1.0 = slower, <1.0 = faster
+        
+        # Pre-generated audio cache
+        self.pregenerated_phrases = []  # List of (text, audio_data) tuples
+        self.current_phrase_index = 0
+        self.cache_dir = PREGENERATED_CACHE_DIR
+        os.makedirs(self.cache_dir, exist_ok=True)
+        
+        # Synchronization for pre-generation
+        self.pregeneration_complete = threading.Event()
+        self.pregeneration_complete.clear()
         
         # Thread-safe queue for audio data (to pass from background thread to main thread)
         self.audio_playback_queue = queue.Queue()
@@ -112,8 +131,13 @@ class LLMSinger:
         # Mix between dry (flattened) and melody-shifted signal based on autotune_amount
         self.autotune_mix = Interp(self.flattener, self.pitch_shift, interp=self.autotune_amount)
         
-        # Add reverb effect after auto-tune
-        self.reverb = Freeverb(self.autotune_mix, size=0.8, damp=0.7, bal=self.reverb_amount)
+        # Apply transpose (octave shift) BEFORE reverb
+        # Each octave shifts by root_freq Hz (440 Hz)
+        transpose_shift = self.transpose * self.root_freq
+        self.transpose_shifter = FreqShift(self.autotune_mix, shift=transpose_shift, mul=1)
+        
+        # Add reverb effect after transpose
+        self.reverb = Freeverb(self.transpose_shifter, size=0.8, damp=0.7, bal=self.reverb_amount)
         
         # Pan to stereo and output
         self.output = Pan(self.reverb, outs=self.channels, pan=0.5)
@@ -134,11 +158,86 @@ class LLMSinger:
         
         print(f"[LLMSinger] Initializing with interval={generation_interval}s")
         
-        # Initialize LLM in background
-        threading.Thread(target=self._init_llm, daemon=True).start()
+        # Initialize LLM and pre-generate phrases in background
+        threading.Thread(target=self._init_llm_and_pregenerate, daemon=True).start()
+    
+    def _init_llm_and_pregenerate(self):
+        """Initialize LLM connection and pre-generate phrases in background"""
+        print("[LLMSinger] Connecting to Ollama...")
+        if self.on_lyrics_callback:
+            self.on_lyrics_callback("Connecting to Ollama...")
+        
+        if self.llm_client.connect():
+            self.llm_ready = True
+            print("[LLMSinger] LLM ready")
+            if self.on_lyrics_callback:
+                self.on_lyrics_callback("Pre-generating phrases...")
+            
+            # Pre-generate phrases
+            self._pregenerate_phrases()
+            
+            # Signal that pre-generation is complete
+            self.pregeneration_complete.set()
+            
+            if self.on_lyrics_callback:
+                self.on_lyrics_callback(f"Ready! {len(self.pregenerated_phrases)} phrases cached")
+        else:
+            print("[LLMSinger] LLM connection failed")
+            if self.on_lyrics_callback:
+                self.on_lyrics_callback("⚠️ LLM connection failed - check Ollama")
+            # Even on failure, set the event so system doesn't hang
+            self.pregeneration_complete.set()
+    
+    def _pregenerate_phrases(self):
+        """Pre-generate multiple phrases and audio files on startup"""
+        print(f"[LLMSinger] Pre-generating {NUM_PREGENERATED_PHRASES} phrases...")
+        
+        # Different frame scenarios to generate variety
+        scenarios = [
+            "empty space with no movement",
+            "a lone figure moving through space",
+            "2 figures dancing together",
+            "3 figures dancing together",
+            "4 figures dancing together",
+            "5 figures dancing together",
+            "multiple figures in coordinated motion",
+            "figures moving in different directions",
+            "a solitary dancer in the center",
+            "dancers forming geometric patterns"
+        ]
+        
+        for i in range(NUM_PREGENERATED_PHRASES):
+            try:
+                # Pick a scenario (cycle through them)
+                scenario = scenarios[i % len(scenarios)]
+                
+                # Generate LLM response
+                prompt = f"{self.base_prompt}\n\nScene: {scenario}\n\nDescribe in ONE SHORT SENTENCE (maximum 10 words):"
+                response, error = self.llm_client.generate(prompt, temperature=0.9, max_tokens=30)
+                
+                if error:
+                    print(f"[LLMSinger] Pre-gen error #{i}: {error}")
+                    continue
+                
+                text = response.strip().replace('\n', ' ')
+                print(f"[LLMSinger] Pre-generated #{i}: {text}")
+                
+                # Generate audio
+                audio_data = self._text_to_speech(text)
+                
+                if audio_data is not None:
+                    self.pregenerated_phrases.append((text, audio_data))
+                    print(f"[LLMSinger] Cached phrase #{i} ({len(audio_data)} samples)")
+                else:
+                    print(f"[LLMSinger] Failed to generate audio for phrase #{i}")
+                    
+            except Exception as e:
+                print(f"[LLMSinger] Error pre-generating phrase #{i}: {e}")
+        
+        print(f"[LLMSinger] Pre-generation complete! {len(self.pregenerated_phrases)} phrases ready")
     
     def _init_llm(self):
-        """Initialize LLM connection in background"""
+        """Initialize LLM connection in background (deprecated - use _init_llm_and_pregenerate)"""
         print("[LLMSinger] Connecting to Ollama...")
         if self.on_lyrics_callback:
             self.on_lyrics_callback("Connecting to Ollama...")
@@ -162,6 +261,17 @@ class LLMSinger:
         self.generation_thread = threading.Thread(target=self._generation_loop, daemon=True)
         self.generation_thread.start()
         print("[LLMSinger] Started")
+        print("[LLMSinger] Waiting for pre-generation to complete...")
+        
+        # Wait up to 60 seconds for pre-generation to complete
+        if self.pregeneration_complete.wait(timeout=60):
+            print(f"[LLMSinger] Pre-generation complete! {len(self.pregenerated_phrases)} phrases ready")
+        else:
+            print("[LLMSinger] WARNING: Pre-generation timeout after 60s")
+    
+    def is_ready(self):
+        """Check if the LLM Singer is ready with pre-generated phrases"""
+        return self.pregeneration_complete.is_set() and len(self.pregenerated_phrases) > 0
     
     def check_audio_queue(self):
         """Check for audio in the queue and play it. Must be called from main thread."""
@@ -198,6 +308,10 @@ class LLMSinger:
         if not self.llm_ready:
             return False
         
+        # Wait for pre-generation to complete before allowing playback
+        if not self.pregeneration_complete.is_set():
+            return False
+        
         if self.is_playing:
             return False
         
@@ -232,7 +346,11 @@ class LLMSinger:
         ).start()
     
     def _generate_and_sing(self, frame_data):
-        """Generate description and sing it (runs in background thread)"""
+        """Play pre-generated phrase (runs in background thread)
+        
+        IMPORTANT: This runs in a separate thread to avoid blocking the audio thread.
+        Instead of generating on-the-fly, we use pre-generated phrases.
+        """
         with self.lock:
             if self.is_playing:
                 self.is_generating = False
@@ -241,40 +359,28 @@ class LLMSinger:
             self.is_playing = True
         
         try:
-            # Analyze frame data
-            description = self._analyze_frame(frame_data)
-            
-            # Generate LLM response
-            print(f"[LLMSinger] Analyzing: {description}")
-            prompt = f"{self.base_prompt}\n\nScene: {description}\n\nDescribe in ONE SHORT SENTENCE (maximum 10 words):"
-            
-            response, error = self.llm_client.generate(prompt, temperature=0.8, max_tokens=30)
-            
-            if error:
-                print(f"[LLMSinger] LLM error: {error}")
+            # Check if we have pre-generated phrases
+            if not self.pregenerated_phrases:
+                print(f"[LLMSinger] No pre-generated phrases available")
                 self.is_playing = False
                 self.is_generating = False
                 return
             
-            # Clean up response
-            text = response.strip().replace('\n', ' ')
-            print(f"[LLMSinger] Singing: {text}")
+            # Get next pre-generated phrase
+            text, audio_data = self.pregenerated_phrases[self.current_phrase_index]
+            self.current_phrase_index = (self.current_phrase_index + 1) % len(self.pregenerated_phrases)
+            
+            print(f"[LLMSinger] Singing pre-generated phrase: {text}")
             
             # Store and callback with lyrics
             self.last_lyrics = text
             if self.on_lyrics_callback:
                 self.on_lyrics_callback(text)
             
-            # Generate speech (melody will be applied during playback)
-            audio_data = self._text_to_speech(text)
-            
-            if audio_data is not None:
-                print(f"[LLMSinger] Generated {len(audio_data)} audio samples")
-                # Queue audio for playback in main thread
-                self.audio_playback_queue.put(audio_data)
-                print(f"[LLMSinger] Audio queued for playback")
-            else:
-                print(f"[LLMSinger] Failed to generate audio")
+            # Queue audio for playback in main thread
+            print(f"[LLMSinger] Queueing {len(audio_data)} audio samples")
+            self.audio_playback_queue.put(audio_data)
+            print(f"[LLMSinger] Audio queued for playback")
             
         except Exception as e:
             print(f"[LLMSinger] Error: {e}")
@@ -431,9 +537,30 @@ class LLMSinger:
             traceback.print_exc()
     
     def set_base_prompt(self, prompt):
-        """Update the base prompt"""
+        """Update the base prompt and regenerate phrases"""
         self.base_prompt = prompt
-        print(f"[LLMSinger] Base prompt updated")
+        print(f"[LLMSinger] Base prompt updated, regenerating phrases...")
+        
+        # Regenerate phrases in background
+        if self.on_lyrics_callback:
+            self.on_lyrics_callback("Regenerating phrases for new prompt...")
+        
+        threading.Thread(target=self._regenerate_phrases, daemon=True).start()
+    
+    def _regenerate_phrases(self):
+        """Regenerate all phrases with the new prompt"""
+        # Clear old phrases
+        old_count = len(self.pregenerated_phrases)
+        self.pregenerated_phrases.clear()
+        self.current_phrase_index = 0
+        
+        print(f"[LLMSinger] Cleared {old_count} old phrases, generating new ones...")
+        
+        # Pre-generate new phrases
+        self._pregenerate_phrases()
+        
+        if self.on_lyrics_callback:
+            self.on_lyrics_callback(f"Ready! {len(self.pregenerated_phrases)} new phrases cached")
     
     def set_generation_interval(self, interval):
         """Update generation interval in seconds"""
@@ -460,6 +587,15 @@ class LLMSinger:
         if self.player:
             self.player.mul = gain
         print(f"[LLMSinger] Gain: {self.gain:.2f}")
+    
+    def set_transpose(self, octaves):
+        """Set transpose in octaves (-4 to 0)"""
+        self.transpose = float(np.clip(octaves, -4, 0))
+        if hasattr(self, 'transpose_shifter'):
+            # Each octave shifts by root_freq Hz (440 Hz)
+            transpose_shift = self.transpose * self.root_freq
+            self.transpose_shifter.shift = transpose_shift
+        print(f"[LLMSinger] Transpose: {self.transpose:.2f} octaves ({self.transpose * self.root_freq:.1f} Hz)")
     
     def set_scale(self, scale_name):
         """Set the musical scale for auto-tune"""
@@ -492,18 +628,19 @@ class LLMSinger:
         melody = []
         for i in range(num_notes):
             # Random walk through the scale (prefer stepwise motion)
+            # Use notes across 2 octaves for more pronounced effect
             if i == 0:
-                # Start on root or fifth
-                note_idx = np.random.choice([0, 4])
+                # Start on root, fifth, or octave (more dramatic starting notes)
+                note_idx = np.random.choice([0, 4, 7, len(scale)])
             else:
-                # Move by step (±1 or ±2 scale degrees) with occasional jumps
+                # Move by step (±1 or ±2 scale degrees) with occasional larger jumps
                 last_note = melody[-1][0]
-                if np.random.random() < 0.7:  # 70% stepwise motion
+                if np.random.random() < 0.6:  # 60% stepwise motion
                     step = np.random.choice([-2, -1, 1, 2])
-                else:  # 30% jumps
-                    step = np.random.choice([-4, -3, 3, 4])
+                else:  # 40% larger jumps (more dramatic)
+                    step = np.random.choice([-5, -4, -3, 3, 4, 5, 7])  # Include octave jumps
                 
-                note_idx = (last_note + step) % len(scale)
+                note_idx = (last_note + step) % (len(scale) * 2)  # Use 2 octaves
             
             melody.append((note_idx, self.melody_note_duration))
         
@@ -515,6 +652,7 @@ class LLMSinger:
         
         Args:
             note_index: Index of the note in the scale (0 = root, 1 = second note, etc.)
+                       Can span multiple octaves (e.g., 0-13 for 2 octaves of a 7-note scale)
         
         Returns:
             Frequency shift in Hz
@@ -522,15 +660,19 @@ class LLMSinger:
         # Get the scale degrees (semitones from root)
         scale = SCALES[self.current_scale]
         
-        # Wrap note index to scale length
-        note_index = note_index % len(scale)
+        # Calculate which octave and which note in the scale
+        octave = note_index // len(scale)
+        scale_note = note_index % len(scale)
         
-        # Get semitones for this note
-        semitones = scale[note_index]
+        # Get semitones for this note within its octave
+        semitones = scale[scale_note]
+        
+        # Add octave offset (12 semitones per octave)
+        total_semitones = semitones + (octave * 12)
         
         # Calculate target frequency using equal temperament formula
         # f = f0 * 2^(semitones/12)
-        target_freq = self.root_freq * (2.0 ** (semitones / 12.0))
+        target_freq = self.root_freq * (2.0 ** (total_semitones / 12.0))
         
         # The shift is the difference from root (already flattened to root)
         shift = target_freq - self.root_freq

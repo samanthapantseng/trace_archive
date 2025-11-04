@@ -25,7 +25,13 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bodysynth_drum_class import DrumSequencer, LOOP_LENGTH, NUM_LANES, TOP_LEFT, BOTTOM_RIGHT
 from bodysynth_wave_class import WavetableSynth
-from bodysynth_llm_singer import LLMSinger
+
+# --- Choose ONE LLM Singer implementation (uncomment the one you want) ---
+# All use the same class name "LLMSinger" and same interface, so you can switch by uncommenting the desired line:
+from bodysynth_llm_singer import LLMSinger              # Local: Ollama + Piper (pre-generated phrases, zero runtime overhead, FREE)
+#from bodysynth_llm_singer_replicate import LLMSinger   # Cloud: Replicate API (set token in file, costs $$$)
+#from bodysynth_llm_singer_hf import LLMSinger          # Cloud: HuggingFace Inference API (set token in file, FREE but unreliable)
+
 from bodysynth_gui import SynthMonitor
 
 # --- Configuration ---
@@ -80,21 +86,25 @@ def extract_head_and_arm(frame):
 class BodysynthClient:
     """Client that processes frames and dispatches to enabled components"""
     
-    def __init__(self, drum_enabled=True, wave_enabled=True, gui_enabled=True):
+    def __init__(self, drum_enabled=True, wave_enabled=True, gui_enabled=True, llm_enabled=True):
         self.drum_enabled = drum_enabled
         self.wave_enabled = wave_enabled
         self.gui_enabled = gui_enabled
+        self.llm_enabled = llm_enabled
         
         self.drum_sequencer = None
         self.wavetable_synth = None
         self.llm_singer = None
+        
+        # Flag to control frame processing
+        self.ready_to_process = False
         
         # Person caching: track last seen time and data for each person
         self.person_last_seen = {}  # {person_id: timestamp}
         self.person_cache = {}  # {person_id: {'headpos': ..., 'armline': ...}}
         self.cache_time = CACHE_TIME  # Cache for 5 seconds
         
-        print(f"[BodysynthClient] Initialized - Drum: {drum_enabled}, Wave: {wave_enabled}, GUI: {gui_enabled}")
+        print(f"[BodysynthClient] Initialized - Drum: {drum_enabled}, Wave: {wave_enabled}, GUI: {gui_enabled}, LLM: {llm_enabled}")
     
     def set_drum_sequencer(self, drum_sequencer):
         """Set the drum sequencer instance"""
@@ -111,8 +121,17 @@ class BodysynthClient:
     def on_init(self):
         print(f"[INIT] Connected to server")
     
+    def enable_processing(self):
+        """Enable frame processing - called after LLM pre-generation is complete"""
+        self.ready_to_process = True
+        print("[BodysynthClient] Frame processing ENABLED")
+    
     def on_frame(self, frame: Frame):
         """Process incoming frame and dispatch to enabled components"""
+        # Don't process frames until LLM pre-generation is complete
+        if self.llm_enabled and not self.ready_to_process:
+            return
+        
         snap = extract_head_and_arm(frame)
         
         current_time = time.time()
@@ -309,7 +328,8 @@ def main():
     # Create client
     bodysynth_client = BodysynthClient(drum_enabled=drum_enabled, 
                                        wave_enabled=wave_enabled, 
-                                       gui_enabled=gui_enabled)
+                                       gui_enabled=gui_enabled,
+                                       llm_enabled=llm_enabled)
     
     if drum_sequencer:
         bodysynth_client.set_drum_sequencer(drum_sequencer)
@@ -355,12 +375,23 @@ def main():
                 """Callback when lyrics are generated"""
                 monitor.llm_lyrics_update.emit(lyrics)
             
+            print("[INFO] Initializing LLM Singer (this may take a moment)...")
             llm_singer = LLMSinger(pyo_server, channels=CHANNELS, on_lyrics_callback=on_lyrics_generated)
-            llm_singer.start()
+            llm_singer.start()  # This will block until pre-generation is complete
             bodysynth_client.set_llm_singer(llm_singer)
-            print("[INFO] LLM Singer initialized with GUI callback")
+            
+            if llm_singer.is_ready():
+                print(f"[INFO] LLM Singer ready with {len(llm_singer.pregenerated_phrases)} phrases!")
+                # Enable frame processing now that LLM is ready
+                bodysynth_client.enable_processing()
+            else:
+                print("[WARNING] LLM Singer not ready - check Ollama and Piper")
+                # Enable processing anyway so other components work
+                bodysynth_client.enable_processing()
         else:
             print("[INFO] LLM Singer disabled")
+            # Enable processing immediately if no LLM
+            bodysynth_client.enable_processing()
         
         # Track loop start time and length for GUI
         gui_loop_start_time = time.time()
@@ -433,6 +464,11 @@ def main():
             if llm_singer:
                 llm_singer.set_reverb_amount(amount)
         
+        def on_llm_transpose_changed(octaves):
+            """Handle LLM transpose changes from GUI"""
+            if llm_singer:
+                llm_singer.set_transpose(octaves)
+        
         def on_llm_gain_changed(gain):
             """Handle LLM gain changes from GUI"""
             if llm_singer:
@@ -451,6 +487,7 @@ def main():
             monitor.llm_interval_changed.connect(on_llm_interval_changed)
             monitor.llm_autotune_changed.connect(on_llm_autotune_changed)
             monitor.llm_reverb_changed.connect(on_llm_reverb_changed)
+            monitor.llm_transpose_changed.connect(on_llm_transpose_changed)
             monitor.llm_gain_changed.connect(on_llm_gain_changed)
         
         # Sync scale changes to LLM Singer as well
@@ -466,6 +503,25 @@ def main():
         timer = QTimer()
         timer.timeout.connect(update_gui)
         timer.start(50)  # Update every 50ms
+    else:
+        # No GUI - but still need to initialize LLM if enabled
+        if llm_enabled:
+            print("[INFO] Initializing LLM Singer (this may take a moment)...")
+            llm_singer = LLMSinger(pyo_server, channels=CHANNELS)
+            llm_singer.start()  # This will block until pre-generation is complete
+            bodysynth_client.set_llm_singer(llm_singer)
+            
+            if llm_singer.is_ready():
+                print(f"[INFO] LLM Singer ready with {len(llm_singer.pregenerated_phrases)} phrases!")
+                # Enable frame processing now that LLM is ready
+                bodysynth_client.enable_processing()
+            else:
+                print("[WARNING] LLM Singer not ready - check Ollama and Piper")
+                # Enable processing anyway so other components work
+                bodysynth_client.enable_processing()
+        else:
+            # No LLM, enable processing immediately
+            bodysynth_client.enable_processing()
     
     # Run main loop
     try:

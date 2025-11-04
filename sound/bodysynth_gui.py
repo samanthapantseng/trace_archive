@@ -655,6 +655,7 @@ class SynthMonitor(QMainWindow):
     llm_interval_changed = pyqtSignal(float)  # Signal for generation interval changes
     llm_autotune_changed = pyqtSignal(float)  # Signal for auto-tune amount changes
     llm_reverb_changed = pyqtSignal(float)  # Signal for reverb amount changes
+    llm_transpose_changed = pyqtSignal(float)  # Signal for transpose changes
     llm_gain_changed = pyqtSignal(float)  # Signal for LLM gain changes
     llm_lyrics_update = pyqtSignal(str)  # Signal for lyrics updates
     
@@ -752,6 +753,21 @@ class SynthMonitor(QMainWindow):
         gain_layout.addWidget(self.drum_gain_slider, stretch=2)
         gain_layout.addWidget(self.drum_gain_value_label)
         
+        # LLM gain slider
+        llm_gain_label = QLabel("LLM Gain:")
+        self.llm_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_gain_slider.setMinimum(0)  # 0.0
+        self.llm_gain_slider.setMaximum(100)  # 1.0
+        self.llm_gain_slider.setValue(60)  # 0.6 default
+        self.llm_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.llm_gain_slider.setTickInterval(10)
+        self.llm_gain_value_label = QLabel("0.60")
+        self.llm_gain_slider.valueChanged.connect(self._on_llm_gain_changed)
+        
+        gain_layout.addWidget(llm_gain_label)
+        gain_layout.addWidget(self.llm_gain_slider, stretch=2)
+        gain_layout.addWidget(self.llm_gain_value_label)
+        
         main_v_layout.addLayout(gain_layout)
         
         # Bottom: Main content (voice widgets, head position, and LLM controls)
@@ -812,10 +828,10 @@ class SynthMonitor(QMainWindow):
         self.llm_interval_slider = QSlider(Qt.Orientation.Horizontal)
         self.llm_interval_slider.setMinimum(10)  # 10 seconds
         self.llm_interval_slider.setMaximum(120)  # 120 seconds
-        self.llm_interval_slider.setValue(30)  # 30s default
+        self.llm_interval_slider.setValue(15)  # 15s default
         self.llm_interval_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.llm_interval_slider.setTickInterval(10)
-        self.llm_interval_value_label = QLabel("30s")
+        self.llm_interval_value_label = QLabel("15s")
         self.llm_interval_slider.valueChanged.connect(self._on_llm_interval_changed)
         
         interval_h_layout.addWidget(self.llm_interval_slider)
@@ -858,23 +874,23 @@ class SynthMonitor(QMainWindow):
         reverb_h_layout.addWidget(self.llm_reverb_value_label)
         llm_layout.addLayout(reverb_h_layout)
         
-        # Gain slider
-        gain_label = QLabel("Gain:")
-        llm_layout.addWidget(gain_label)
+        # Transpose slider
+        transpose_label = QLabel("Transpose (Octaves):")
+        llm_layout.addWidget(transpose_label)
         
-        gain_h_layout = QHBoxLayout()
-        self.llm_gain_slider = QSlider(Qt.Orientation.Horizontal)
-        self.llm_gain_slider.setMinimum(0)
-        self.llm_gain_slider.setMaximum(100)
-        self.llm_gain_slider.setValue(60)  # 0.6 default
-        self.llm_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.llm_gain_slider.setTickInterval(10)
-        self.llm_gain_value_label = QLabel("0.60")
-        self.llm_gain_slider.valueChanged.connect(self._on_llm_gain_changed)
+        transpose_h_layout = QHBoxLayout()
+        self.llm_transpose_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_transpose_slider.setMinimum(-400)  # -4.00 octaves
+        self.llm_transpose_slider.setMaximum(0)     # 0.00 octaves
+        self.llm_transpose_slider.setValue(0)  # 0 octaves default
+        self.llm_transpose_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.llm_transpose_slider.setTickInterval(100)
+        self.llm_transpose_value_label = QLabel("0.00")
+        self.llm_transpose_slider.valueChanged.connect(self._on_llm_transpose_changed)
         
-        gain_h_layout.addWidget(self.llm_gain_slider)
-        gain_h_layout.addWidget(self.llm_gain_value_label)
-        llm_layout.addLayout(gain_h_layout)
+        transpose_h_layout.addWidget(self.llm_transpose_slider)
+        transpose_h_layout.addWidget(self.llm_transpose_value_label)
+        llm_layout.addLayout(transpose_h_layout)
         
         # Current Lyrics Display
         lyrics_label = QLabel("Current Lyrics:")
@@ -943,6 +959,12 @@ class SynthMonitor(QMainWindow):
         amount = value / 100.0
         self.llm_reverb_value_label.setText(f"{amount:.2f}")
         self.llm_reverb_changed.emit(amount)
+    
+    def _on_llm_transpose_changed(self, value):
+        """Handle LLM transpose slider changes"""
+        octaves = value / 100.0  # -2.00 to +2.00
+        self.llm_transpose_value_label.setText(f"{octaves:+.2f}")
+        self.llm_transpose_changed.emit(octaves)
     
     def _on_llm_gain_changed(self, value):
         """Handle LLM gain slider changes"""
