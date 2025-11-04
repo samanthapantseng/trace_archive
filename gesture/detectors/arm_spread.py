@@ -8,16 +8,17 @@ from PyQt5.QtGui import QVector3D
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+
 class ArmSpreadDetector:
     """Detect when a person spreads both arms wide — open / embrace gesture."""
 
     def __init__(self):
-        self._prev_spread = {}  # Track previous frame states per person
-        self._last_trigger = {}  # Track last trigger time per person to avoid rapid repeats
-        self._cooldown = 0.5     # seconds between allowed triggers per person
+        self._prev_spread = {}
+        self._last_trigger = {}
+        self._cooldown = 0.5  # seconds between triggers (prevents spam)
 
     def _get_joint_pos(self, person: Person, joint_index: int):
-        """Safely extract a joint position (QVector3D) from a person skeleton."""
+        """Safely extract a joint position (QVector3D) from a skeleton."""
         skel = getattr(person, 'skeleton', None)
         if not skel or len(skel) <= joint_index:
             return None
@@ -30,8 +31,8 @@ class ArmSpreadDetector:
         if not hasattr(frame, 'people') or not frame.people:
             self._prev_spread.clear()
             return events
-        
-        now = time.time()  # current timestamp for cooldown checks
+
+        now = time.time()
 
         for p in frame.people:
             pid = getattr(p, 'id', id(p))
@@ -48,7 +49,7 @@ class ArmSpreadDetector:
             if not (lw and rw and chest and lshoulder and rshoulder):
                 continue
 
-            # 1️⃣ both wrists roughly level with shoulders (±150mm)
+            # 1️⃣ Both wrists roughly level with shoulders (±150mm)
             shoulder_y = (lshoulder.y + rshoulder.y) / 2.0
             cond_height = abs(lw.y - shoulder_y) < 150 and abs(rw.y - shoulder_y) < 150
 
@@ -91,6 +92,6 @@ class ArmSpreadDetector:
                 except Exception as e:
                     print(f"[OpenGL error while drawing arm spread sphere] {e}")
 
-             self._prev_spread[pid] = is_spread
+            self._prev_spread[pid] = is_spread
 
         return events
