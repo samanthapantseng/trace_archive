@@ -25,6 +25,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from bodysynth_drum_class import DrumSequencer, LOOP_LENGTH, NUM_LANES, TOP_LEFT, BOTTOM_RIGHT
 from bodysynth_wave_class import WavetableSynth
+from bodysynth_llm_singer import LLMSinger
 from bodysynth_gui import SynthMonitor
 
 # --- Configuration ---
@@ -86,6 +87,7 @@ class BodysynthClient:
         
         self.drum_sequencer = None
         self.wavetable_synth = None
+        self.llm_singer = None
         
         # Person caching: track last seen time and data for each person
         self.person_last_seen = {}  # {person_id: timestamp}
@@ -101,6 +103,10 @@ class BodysynthClient:
     def set_wavetable_synth(self, wavetable_synth):
         """Set the wavetable synth instance"""
         self.wavetable_synth = wavetable_synth
+    
+    def set_llm_singer(self, llm_singer):
+        """Set the LLM singer instance"""
+        self.llm_singer = llm_singer
     
     def on_init(self):
         print(f"[INIT] Connected to server")
@@ -165,6 +171,14 @@ class BodysynthClient:
         if self.wave_enabled and self.wavetable_synth:
             wave_info = self.wavetable_synth.process_frame(snap['armlines'])
         
+        # Process LLM singer (pass frame data for analysis)
+        if self.llm_singer:
+            frame_data = {
+                'people': snap['headpos'],
+                'num_people': len(snap['headpos'])
+            }
+            self.llm_singer.process_frame(frame_data)
+        
         # Update GUI data if enabled
         if self.gui_enabled:
             with data_lock:
@@ -227,23 +241,25 @@ def main():
     # Component enable/disable flags
     parser.add_argument("--drum", action="store_true", help="Enable drum sequencer")
     parser.add_argument("--wave", action="store_true", help="Enable wavetable synthesis")
+    parser.add_argument("--llm", action="store_true", help="Enable LLM Singer")
     parser.add_argument("--gui", action="store_true", help="Enable GUI visualization")
-    parser.add_argument("--all", action="store_true", help="Enable all components (drum + wave + gui)")
+    parser.add_argument("--all", action="store_true", help="Enable all components (drum + wave + llm + gui)")
     
     args = parser.parse_args()
     
     # Determine which components to enable
     drum_enabled = args.drum or args.all
     wave_enabled = args.wave or args.all
+    llm_enabled = args.llm or args.all
     gui_enabled = args.gui or args.all
 
     
     # If nothing specified, enable all by default
-    if not (args.drum or args.wave or args.gui or args.all):
+    if not (args.drum or args.wave or args.llm or args.gui or args.all):
         print("[INFO] No components specified, enabling all by default")
-        drum_enabled = wave_enabled = gui_enabled = True
+        drum_enabled = wave_enabled = llm_enabled = gui_enabled = True
     
-    print(f"[INFO] Enabled components: Drum={drum_enabled}, Wave={wave_enabled}, GUI={gui_enabled}")
+    print(f"[INFO] Enabled components: Drum={drum_enabled}, Wave={wave_enabled}, LLM={llm_enabled}, GUI={gui_enabled}")
     
     # Setup GUI/QApplication FIRST before any pyo initialization
     app = None
@@ -256,7 +272,7 @@ def main():
     # Initialize pyo audio server if any audio component is enabled
     pyo_server = None
     actual_sample_rate = 44100
-    if drum_enabled or wave_enabled:
+    if drum_enabled or wave_enabled or llm_enabled:
         # Query the audio device to get its sample rate using pyo
         device_index = AUDIO_DEVICE  # Your audio device
         devices_info = pa_get_devices_infos()
@@ -279,12 +295,16 @@ def main():
     # Initialize components in main thread (critical for pyo)
     drum_sequencer = None
     wavetable_synth = None
+    llm_singer = None
     
     if drum_enabled:
         drum_sequencer = DrumSequencer(pyo_server, num_lanes=NUM_LANES, loop_length=LOOP_LENGTH, channels=CHANNELS)
     
     if wave_enabled:
         wavetable_synth = WavetableSynth(pyo_server, gain=0.3, sample_rate=actual_sample_rate, channels=CHANNELS)
+    
+    # LLM Singer will be initialized after GUI
+    llm_singer = None
     
     # Create client
     bodysynth_client = BodysynthClient(drum_enabled=drum_enabled, 
@@ -329,6 +349,19 @@ def main():
         
         monitor.show()
         
+        # Initialize LLM Singer with lyrics callback to GUI (if enabled)
+        if llm_enabled:
+            def on_lyrics_generated(lyrics):
+                """Callback when lyrics are generated"""
+                monitor.llm_lyrics_update.emit(lyrics)
+            
+            llm_singer = LLMSinger(pyo_server, channels=CHANNELS, on_lyrics_callback=on_lyrics_generated)
+            llm_singer.start()
+            bodysynth_client.set_llm_singer(llm_singer)
+            print("[INFO] LLM Singer initialized with GUI callback")
+        else:
+            print("[INFO] LLM Singer disabled")
+        
         # Track loop start time and length for GUI
         gui_loop_start_time = time.time()
         current_loop_length = [LOOP_LENGTH]  # Use list to make it mutable in closure
@@ -345,6 +378,10 @@ def main():
             
             loop_position = (elapsed % current_loop_length[0]) / current_loop_length[0]
             monitor.head_widget.update_loop_position(loop_position)
+            
+            # Check for LLM audio to play (main thread context)
+            if llm_singer:
+                llm_singer.check_audio_queue()
         
         def on_loop_length_changed(new_length):
             """Handle loop length changes from GUI"""
@@ -376,12 +413,55 @@ def main():
             if wave_enabled and wavetable_synth:
                 wavetable_synth.set_gain(gain)
         
+        def on_llm_prompt_changed(prompt):
+            """Handle LLM prompt changes from GUI"""
+            if llm_singer:
+                llm_singer.set_base_prompt(prompt)
+        
+        def on_llm_interval_changed(interval):
+            """Handle LLM interval changes from GUI"""
+            if llm_singer:
+                llm_singer.set_generation_interval(interval)
+        
+        def on_llm_autotune_changed(amount):
+            """Handle LLM auto-tune changes from GUI"""
+            if llm_singer:
+                llm_singer.set_autotune_amount(amount)
+        
+        def on_llm_reverb_changed(amount):
+            """Handle LLM reverb changes from GUI"""
+            if llm_singer:
+                llm_singer.set_reverb_amount(amount)
+        
+        def on_llm_gain_changed(gain):
+            """Handle LLM gain changes from GUI"""
+            if llm_singer:
+                llm_singer.set_gain(gain)
+        
         # Connect GUI signals
         monitor.loop_length_changed.connect(on_loop_length_changed)
         monitor.scale_changed.connect(on_scale_changed)
         monitor.click_enabled_changed.connect(on_click_changed)
         monitor.drum_gain_changed.connect(on_drum_gain_changed)
         monitor.wave_gain_changed.connect(on_wave_gain_changed)
+        
+        # Connect LLM Singer signals (if enabled)
+        if llm_enabled:
+            monitor.llm_prompt_changed.connect(on_llm_prompt_changed)
+            monitor.llm_interval_changed.connect(on_llm_interval_changed)
+            monitor.llm_autotune_changed.connect(on_llm_autotune_changed)
+            monitor.llm_reverb_changed.connect(on_llm_reverb_changed)
+            monitor.llm_gain_changed.connect(on_llm_gain_changed)
+        
+        # Sync scale changes to LLM Singer as well
+        def on_scale_changed_full(scale_name):
+            if wave_enabled and wavetable_synth:
+                wavetable_synth.set_scale(scale_name)
+            if llm_singer:
+                llm_singer.set_scale(scale_name)
+        
+        monitor.scale_changed.disconnect(on_scale_changed)
+        monitor.scale_changed.connect(on_scale_changed_full)
         
         timer = QTimer()
         timer.timeout.connect(update_gui)
@@ -404,6 +484,8 @@ def main():
             drum_sequencer.stop()
         if wavetable_synth:
             wavetable_synth.stop()
+        if llm_singer:
+            llm_singer.stop()
         if pyo_server:
             pyo_server.stop()
             pyo_server.shutdown()

@@ -1,5 +1,5 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QComboBox, QCheckBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider, QComboBox, QCheckBox, QTextEdit, QPushButton, QGroupBox
 from PyQt6.QtCore import QTimer, pyqtSignal, QObject
 from PyQt6.QtGui import QPainter, QPen, QColor, QFont
 from PyQt6.QtCore import Qt
@@ -650,6 +650,14 @@ class SynthMonitor(QMainWindow):
     drum_gain_changed = pyqtSignal(float)  # Signal for drum gain changes
     wave_gain_changed = pyqtSignal(float)  # Signal for wave gain changes
     
+    # LLM Singer signals
+    llm_prompt_changed = pyqtSignal(str)  # Signal for base prompt changes
+    llm_interval_changed = pyqtSignal(float)  # Signal for generation interval changes
+    llm_autotune_changed = pyqtSignal(float)  # Signal for auto-tune amount changes
+    llm_reverb_changed = pyqtSignal(float)  # Signal for reverb amount changes
+    llm_gain_changed = pyqtSignal(float)  # Signal for LLM gain changes
+    llm_lyrics_update = pyqtSignal(str)  # Signal for lyrics updates
+    
     # Define colors for each voice (matches head position dots)
     VOICE_COLORS = ['red', 'green', 'blue', 'yellow', 'magenta', 'cyan']
 
@@ -746,16 +754,20 @@ class SynthMonitor(QMainWindow):
         
         main_v_layout.addLayout(gain_layout)
         
-        # Bottom: Main content (voice widgets and head position)
+        # Bottom: Main content (voice widgets, head position, and LLM controls)
         self.main_layout = QHBoxLayout()
         
-        # Left side: voice widgets in vertical layout (50%)
+        # Left side: voice widgets in vertical layout (33%)
         self.voices_layout = QVBoxLayout()
         self.main_layout.addLayout(self.voices_layout, stretch=1)
         
-        # Right side: head position widget (sequencer) (50%)
+        # Middle: head position widget (sequencer) (33%)
         self.head_widget = HeadPositionWidget(num_lanes=num_lanes, top_left=top_left, bottom_right=bottom_right)
         self.main_layout.addWidget(self.head_widget, stretch=1)
+        
+        # Right side: LLM Singer controls (33%)
+        self.llm_layout = self._create_llm_controls()
+        self.main_layout.addLayout(self.llm_layout, stretch=1)
         
         main_v_layout.addLayout(self.main_layout)
         
@@ -768,6 +780,120 @@ class SynthMonitor(QMainWindow):
             self.voices_layout.addWidget(widget)
 
         self.update_signal.connect(self.handle_update)
+    
+    def _create_llm_controls(self):
+        """Create LLM Singer control panel"""
+        llm_layout = QVBoxLayout()
+        
+        # Title
+        title_label = QLabel("LLM Singer")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        llm_layout.addWidget(title_label)
+        
+        # Base Prompt
+        prompt_label = QLabel("Base Prompt:")
+        llm_layout.addWidget(prompt_label)
+        
+        self.llm_prompt_text = QTextEdit()
+        self.llm_prompt_text.setPlainText("You are an alchemist trying to find a dance to create a bad spell on a kingdom. Describe what you see in poetic, mystical terms in one short sentence.")
+        self.llm_prompt_text.setMaximumHeight(100)
+        llm_layout.addWidget(self.llm_prompt_text)
+        
+        # Apply prompt button
+        apply_prompt_btn = QPushButton("Apply Prompt")
+        apply_prompt_btn.clicked.connect(self._on_llm_prompt_changed)
+        llm_layout.addWidget(apply_prompt_btn)
+        
+        # Generation Interval slider
+        interval_label = QLabel("Generation Interval:")
+        llm_layout.addWidget(interval_label)
+        
+        interval_h_layout = QHBoxLayout()
+        self.llm_interval_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_interval_slider.setMinimum(10)  # 10 seconds
+        self.llm_interval_slider.setMaximum(120)  # 120 seconds
+        self.llm_interval_slider.setValue(30)  # 30s default
+        self.llm_interval_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.llm_interval_slider.setTickInterval(10)
+        self.llm_interval_value_label = QLabel("30s")
+        self.llm_interval_slider.valueChanged.connect(self._on_llm_interval_changed)
+        
+        interval_h_layout.addWidget(self.llm_interval_slider)
+        interval_h_layout.addWidget(self.llm_interval_value_label)
+        llm_layout.addLayout(interval_h_layout)
+        
+        # Auto-tune Amount slider
+        autotune_label = QLabel("Auto-tune Amount:")
+        llm_layout.addWidget(autotune_label)
+        
+        autotune_h_layout = QHBoxLayout()
+        self.llm_autotune_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_autotune_slider.setMinimum(0)
+        self.llm_autotune_slider.setMaximum(100)
+        self.llm_autotune_slider.setValue(50)  # 0.5 default
+        self.llm_autotune_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.llm_autotune_slider.setTickInterval(10)
+        self.llm_autotune_value_label = QLabel("0.50")
+        self.llm_autotune_slider.valueChanged.connect(self._on_llm_autotune_changed)
+        
+        autotune_h_layout.addWidget(self.llm_autotune_slider)
+        autotune_h_layout.addWidget(self.llm_autotune_value_label)
+        llm_layout.addLayout(autotune_h_layout)
+        
+        # Reverb Amount slider
+        reverb_label = QLabel("Reverb Amount:")
+        llm_layout.addWidget(reverb_label)
+        
+        reverb_h_layout = QHBoxLayout()
+        self.llm_reverb_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_reverb_slider.setMinimum(0)
+        self.llm_reverb_slider.setMaximum(100)
+        self.llm_reverb_slider.setValue(70)  # 0.7 default
+        self.llm_reverb_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.llm_reverb_slider.setTickInterval(10)
+        self.llm_reverb_value_label = QLabel("0.70")
+        self.llm_reverb_slider.valueChanged.connect(self._on_llm_reverb_changed)
+        
+        reverb_h_layout.addWidget(self.llm_reverb_slider)
+        reverb_h_layout.addWidget(self.llm_reverb_value_label)
+        llm_layout.addLayout(reverb_h_layout)
+        
+        # Gain slider
+        gain_label = QLabel("Gain:")
+        llm_layout.addWidget(gain_label)
+        
+        gain_h_layout = QHBoxLayout()
+        self.llm_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_gain_slider.setMinimum(0)
+        self.llm_gain_slider.setMaximum(100)
+        self.llm_gain_slider.setValue(60)  # 0.6 default
+        self.llm_gain_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.llm_gain_slider.setTickInterval(10)
+        self.llm_gain_value_label = QLabel("0.60")
+        self.llm_gain_slider.valueChanged.connect(self._on_llm_gain_changed)
+        
+        gain_h_layout.addWidget(self.llm_gain_slider)
+        gain_h_layout.addWidget(self.llm_gain_value_label)
+        llm_layout.addLayout(gain_h_layout)
+        
+        # Current Lyrics Display
+        lyrics_label = QLabel("Current Lyrics:")
+        lyrics_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        llm_layout.addWidget(lyrics_label)
+        
+        self.llm_lyrics_display = QLabel("Initializing...")
+        self.llm_lyrics_display.setWordWrap(True)
+        self.llm_lyrics_display.setStyleSheet("background-color: #2a2a2a; padding: 10px; border-radius: 5px; color: #00ff00;")
+        self.llm_lyrics_display.setMinimumHeight(100)
+        llm_layout.addWidget(self.llm_lyrics_display)
+        
+        # Connect lyrics update signal
+        self.llm_lyrics_update.connect(self._on_lyrics_update)
+        
+        # Add stretch to push everything to the top
+        llm_layout.addStretch()
+        
+        return llm_layout
     
     def _on_loop_slider_changed(self, value):
         """Handle loop length slider changes"""
@@ -795,6 +921,38 @@ class SynthMonitor(QMainWindow):
         gain = value / 100.0  # Convert to 0.0-1.0
         self.wave_gain_value_label.setText(f"{gain:.2f}")
         self.wave_gain_changed.emit(gain)
+    
+    def _on_llm_prompt_changed(self):
+        """Handle LLM prompt changes"""
+        prompt = self.llm_prompt_text.toPlainText()
+        self.llm_prompt_changed.emit(prompt)
+    
+    def _on_llm_interval_changed(self, value):
+        """Handle LLM interval slider changes"""
+        self.llm_interval_value_label.setText(f"{value}s")
+        self.llm_interval_changed.emit(float(value))
+    
+    def _on_llm_autotune_changed(self, value):
+        """Handle LLM auto-tune slider changes"""
+        amount = value / 100.0
+        self.llm_autotune_value_label.setText(f"{amount:.2f}")
+        self.llm_autotune_changed.emit(amount)
+    
+    def _on_llm_reverb_changed(self, value):
+        """Handle LLM reverb slider changes"""
+        amount = value / 100.0
+        self.llm_reverb_value_label.setText(f"{amount:.2f}")
+        self.llm_reverb_changed.emit(amount)
+    
+    def _on_llm_gain_changed(self, value):
+        """Handle LLM gain slider changes"""
+        gain = value / 100.0
+        self.llm_gain_value_label.setText(f"{gain:.2f}")
+        self.llm_gain_changed.emit(gain)
+    
+    def _on_lyrics_update(self, lyrics):
+        """Handle lyrics updates from LLM Singer"""
+        self.llm_lyrics_display.setText(lyrics)
 
     def handle_update(self, all_voice_data):
         active_ids = list(all_voice_data.keys())
