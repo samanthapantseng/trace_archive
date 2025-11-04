@@ -13,6 +13,11 @@ from pythonosc import udp_client
 
 # Import detectors 
 from detectors.head_bump import HeadBumpDetector
+from detectors.high_five import HighFiveDetector
+from detectors.hug import HugDetector
+from detectors.arm_stretch import ArmStretchDetector
+from detectors.arm_spread import ArmSpreadDetector 
+from detectors.handshake import HandshakeDetector
 
 class TDsender:
     def __init__(self, ip="127.0.0.1", port=7000):
@@ -34,6 +39,11 @@ class CustomSkeletonWidget(SkeletonGLWidget):
         # Load detectors
         self.detectors = [
             HeadBumpDetector(),
+            HighFiveDetector(),
+            HugDetector(),
+            ArmStretchDetector(),
+            ArmSpreadDetector(),
+            HandshakeDetector()
         ]
 
         print(f"[INIT] Loaded {len(self.detectors)} detectors.")
