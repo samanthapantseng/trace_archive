@@ -240,7 +240,7 @@ class DrumSequencer:
         self.last_loop_position = 0.0
         self.triggered_this_loop = set()
 
-        self.debug_max_volume = True
+        self.debug_max_volume = False
         
         # Define drum parameters for all possible drum types
         all_drum_params = [
@@ -279,7 +279,7 @@ class DrumSequencer:
                 server=pyo_server,
                 channels=self.channels
             )
-            print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz, duration={params['duration']}s")
+            #print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz, duration={params['duration']}s")
         
         if self.debug_max_volume:
             print("[DrumSequencer] DEBUG MODE: All samples will play at maximum volume")
@@ -328,7 +328,7 @@ class DrumSequencer:
         if new_num_lanes == self.num_lanes:
             return  # No change needed
         
-        print(f"[DrumSequencer] Updating lanes from {self.num_lanes} to {new_num_lanes}")
+        #print(f"[DrumSequencer] Updating lanes from {self.num_lanes} to {new_num_lanes}")
         
         # Clear trigger tracking to prevent immediate re-trigger
         self.triggered_this_loop.clear()
@@ -368,7 +368,7 @@ class DrumSequencer:
                 server=self.pyo_server,
                 channels=self.channels
             )
-            print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz")
+            #print(f"[DrumSequencer] Lane {lane_idx}: {params['drum_type']}, freq={params['base_freq']}Hz")
     
     def process_frame(self, head_positions):
         """Process frame data and trigger samples as needed
