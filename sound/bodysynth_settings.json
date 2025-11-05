@@ -1,0 +1,23 @@
+{
+  "loop_length": 2.4,
+  "scale": "Dorian",
+  "click_enabled": false,
+  "drum_gain": 0.0,
+  "drum_distortion": 1.0,
+  "drum_compression": 1.0,
+  "wave_gain": 0.14,
+  "wave_distortion": 0.0,
+  "wave_lfo_amount": 0.48,
+  "wave_lfo_slowdown": 541.0,
+  "wave_min_reverb": 0.0,
+  "wave_max_armlen": 1540.0,
+  "wave_min_armlen": 339.0,
+  "wave_octave_high": 0.0,
+  "wave_octave_low": 0.0,
+  "llm_gain": 1.0,
+  "llm_prompt": "You are an alchemist trying to find a dance to create a bad spell on a kingdom. Describe what you see in poetic, mystical terms in one short sentence.",
+  "llm_interval": 10.0,
+  "llm_autotune": 0.5,
+  "llm_reverb": 0.7,
+  "llm_transpose": 0.0
+}

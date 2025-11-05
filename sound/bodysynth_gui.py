@@ -650,14 +650,31 @@ class SynthMonitor(QMainWindow):
     drum_gain_changed = pyqtSignal(float)  # Signal for drum gain changes
     wave_gain_changed = pyqtSignal(float)  # Signal for wave gain changes
     
+    # Drum effect signals
+    drum_distortion_changed = pyqtSignal(float)  # Signal for drum distortion changes
+    drum_compression_changed = pyqtSignal(float)  # Signal for drum compression changes
+    
+    # Wave effect signals
+    wave_distortion_changed = pyqtSignal(float)  # Signal for wave distortion changes
+    wave_lfo_changed = pyqtSignal(float)  # Signal for wave LFO amount changes
+    wave_lfo_slowdown_changed = pyqtSignal(float)  # Signal for wave LFO slowdown changes
+    wave_min_reverb_changed = pyqtSignal(float)  # Signal for wave min reverb changes
+    wave_max_armlen_changed = pyqtSignal(float)  # Signal for wave max arm length changes
+    wave_min_armlen_changed = pyqtSignal(float)  # Signal for wave min arm length changes
+    wave_octave_high_changed = pyqtSignal(float)  # Signal for wave high octave changes
+    wave_octave_low_changed = pyqtSignal(float)  # Signal for wave low octave changes
+    
     # LLM Singer signals
     llm_prompt_changed = pyqtSignal(str)  # Signal for base prompt changes
-    llm_interval_changed = pyqtSignal(float)  # Signal for generation interval changes
+    llm_interval_changed = pyqtSignal(float)  # Signal for playback interval changes (how often to play pre-cached phrases)
     llm_autotune_changed = pyqtSignal(float)  # Signal for auto-tune amount changes
     llm_reverb_changed = pyqtSignal(float)  # Signal for reverb amount changes
     llm_transpose_changed = pyqtSignal(float)  # Signal for transpose changes
     llm_gain_changed = pyqtSignal(float)  # Signal for LLM gain changes
     llm_lyrics_update = pyqtSignal(str)  # Signal for lyrics updates
+    
+    # Settings save signal
+    settings_changed = pyqtSignal()  # Signal to trigger settings save
     
     # Define colors for each voice (matches head position dots)
     VOICE_COLORS = ['red', 'green', 'blue', 'yellow', 'magenta', 'cyan']
@@ -711,6 +728,11 @@ class SynthMonitor(QMainWindow):
         
         controls_layout.addWidget(scale_label)
         controls_layout.addWidget(self.scale_combo, stretch=1)
+        
+        # Root note display
+        self.root_note_label = QLabel("Root: A (440Hz)")
+        self.root_note_label.setStyleSheet("font-weight: bold; color: #4CAF50;")
+        controls_layout.addWidget(self.root_note_label)
         
         # Click enable checkbox
         self.click_checkbox = QCheckBox("Click")
@@ -770,6 +792,214 @@ class SynthMonitor(QMainWindow):
         
         main_v_layout.addLayout(gain_layout)
         
+        # Effect parameters row - 3 equal columns (Wave, Drum, LLM)
+        effects_layout = QHBoxLayout()
+        
+        # Wave Effects GroupBox (1/3 width)
+        wave_effects_group = QGroupBox("Wave Effects")
+        wave_effects_layout = QVBoxLayout()
+        
+        # Wave Distortion
+        wave_dist_h = QHBoxLayout()
+        wave_dist_h.addWidget(QLabel("Distortion:"))
+        self.wave_distortion_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_distortion_slider.setMinimum(0)
+        self.wave_distortion_slider.setMaximum(100)
+        self.wave_distortion_slider.setValue(0)  # 0.0 default
+        self.wave_distortion_value_label = QLabel("0.00")
+        self.wave_distortion_slider.valueChanged.connect(self._on_wave_distortion_changed)
+        wave_dist_h.addWidget(self.wave_distortion_slider, stretch=2)
+        wave_dist_h.addWidget(self.wave_distortion_value_label)
+        wave_effects_layout.addLayout(wave_dist_h)
+        
+        # Wave LFO Amount
+        wave_lfo_h = QHBoxLayout()
+        wave_lfo_h.addWidget(QLabel("LFO:"))
+        self.wave_lfo_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_lfo_slider.setMinimum(0)
+        self.wave_lfo_slider.setMaximum(100)
+        self.wave_lfo_slider.setValue(50)  # 0.5 default
+        self.wave_lfo_value_label = QLabel("0.50")
+        self.wave_lfo_slider.valueChanged.connect(self._on_wave_lfo_changed)
+        wave_lfo_h.addWidget(self.wave_lfo_slider, stretch=2)
+        wave_lfo_h.addWidget(self.wave_lfo_value_label)
+        wave_effects_layout.addLayout(wave_lfo_h)
+        
+        # Wave LFO Slowdown
+        wave_lfo_slowdown_h = QHBoxLayout()
+        wave_lfo_slowdown_h.addWidget(QLabel("LFO Slowdown:"))
+        self.wave_lfo_slowdown_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_lfo_slowdown_slider.setMinimum(10)  # Min 10x slower
+        self.wave_lfo_slowdown_slider.setMaximum(1000)  # Max 1000x slower
+        self.wave_lfo_slowdown_slider.setValue(200)  # 200 default
+        self.wave_lfo_slowdown_value_label = QLabel("200")
+        self.wave_lfo_slowdown_slider.valueChanged.connect(self._on_wave_lfo_slowdown_changed)
+        wave_lfo_slowdown_h.addWidget(self.wave_lfo_slowdown_slider, stretch=2)
+        wave_lfo_slowdown_h.addWidget(self.wave_lfo_slowdown_value_label)
+        wave_effects_layout.addLayout(wave_lfo_slowdown_h)
+        
+        # Wave Min Reverb
+        wave_reverb_h = QHBoxLayout()
+        wave_reverb_h.addWidget(QLabel("Min Reverb:"))
+        self.wave_min_reverb_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_min_reverb_slider.setMinimum(0)
+        self.wave_min_reverb_slider.setMaximum(100)
+        self.wave_min_reverb_slider.setValue(20)  # 0.2 default
+        self.wave_min_reverb_value_label = QLabel("0.20")
+        self.wave_min_reverb_slider.valueChanged.connect(self._on_wave_min_reverb_changed)
+        wave_reverb_h.addWidget(self.wave_min_reverb_slider, stretch=2)
+        wave_reverb_h.addWidget(self.wave_min_reverb_value_label)
+        wave_effects_layout.addLayout(wave_reverb_h)
+        
+        # Max Arm Length
+        wave_max_arm_h = QHBoxLayout()
+        wave_max_arm_h.addWidget(QLabel("Max Arm:"))
+        self.wave_max_armlen_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_max_armlen_slider.setMinimum(1000)
+        self.wave_max_armlen_slider.setMaximum(4000)
+        self.wave_max_armlen_slider.setValue(2400)  # 2400mm default
+        self.wave_max_armlen_value_label = QLabel("2400mm")
+        self.wave_max_armlen_slider.valueChanged.connect(self._on_wave_max_armlen_changed)
+        wave_max_arm_h.addWidget(self.wave_max_armlen_slider, stretch=2)
+        wave_max_arm_h.addWidget(self.wave_max_armlen_value_label)
+        wave_effects_layout.addLayout(wave_max_arm_h)
+        
+        # Min Arm Length
+        wave_min_arm_h = QHBoxLayout()
+        wave_min_arm_h.addWidget(QLabel("Min Arm:"))
+        self.wave_min_armlen_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_min_armlen_slider.setMinimum(200)
+        self.wave_min_armlen_slider.setMaximum(1000)
+        self.wave_min_armlen_slider.setValue(450)  # 450mm default
+        self.wave_min_armlen_value_label = QLabel("450mm")
+        self.wave_min_armlen_slider.valueChanged.connect(self._on_wave_min_armlen_changed)
+        wave_min_arm_h.addWidget(self.wave_min_armlen_slider, stretch=2)
+        wave_min_arm_h.addWidget(self.wave_min_armlen_value_label)
+        wave_effects_layout.addLayout(wave_min_arm_h)
+        
+        # High Octave Range
+        wave_octave_high_h = QHBoxLayout()
+        wave_octave_high_h.addWidget(QLabel("High Octave:"))
+        self.wave_octave_high_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_octave_high_slider.setMinimum(0)  # 0 octaves
+        self.wave_octave_high_slider.setMaximum(1000)   # +1 octaves
+        self.wave_octave_high_slider.setValue(0)     # +0 octaves default
+        self.wave_octave_high_value_label = QLabel("+0.00")
+        self.wave_octave_high_slider.valueChanged.connect(self._on_wave_octave_high_changed)
+        wave_octave_high_h.addWidget(self.wave_octave_high_slider, stretch=2)
+        wave_octave_high_h.addWidget(self.wave_octave_high_value_label)
+        wave_effects_layout.addLayout(wave_octave_high_h)
+        
+        # Low Octave Range
+        wave_octave_low_h = QHBoxLayout()
+        wave_octave_low_h.addWidget(QLabel("Low Octave:"))
+        self.wave_octave_low_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_octave_low_slider.setMinimum(-1000)  # -1 octaves
+        self.wave_octave_low_slider.setMaximum(0)   # 0 octaves
+        self.wave_octave_low_slider.setValue(0)    # +0 octaves default
+        self.wave_octave_low_value_label = QLabel("0.00")
+        self.wave_octave_low_slider.valueChanged.connect(self._on_wave_octave_low_changed)
+        wave_octave_low_h.addWidget(self.wave_octave_low_slider, stretch=2)
+        wave_octave_low_h.addWidget(self.wave_octave_low_value_label)
+        wave_effects_layout.addLayout(wave_octave_low_h)
+        
+        wave_effects_group.setLayout(wave_effects_layout)
+        effects_layout.addWidget(wave_effects_group, stretch=1)
+        
+        # Drum Effects GroupBox (1/3 width)
+        drum_effects_group = QGroupBox("Drum Effects")
+        drum_effects_layout = QVBoxLayout()
+        
+        # Drum Distortion
+        drum_dist_h = QHBoxLayout()
+        drum_dist_h.addWidget(QLabel("Distortion:"))
+        self.drum_distortion_slider = QSlider(Qt.Orientation.Horizontal)
+        self.drum_distortion_slider.setMinimum(0)
+        self.drum_distortion_slider.setMaximum(100)
+        self.drum_distortion_slider.setValue(100)  # 1.0 default
+        self.drum_distortion_value_label = QLabel("1.00")
+        self.drum_distortion_slider.valueChanged.connect(self._on_drum_distortion_changed)
+        drum_dist_h.addWidget(self.drum_distortion_slider, stretch=2)
+        drum_dist_h.addWidget(self.drum_distortion_value_label)
+        drum_effects_layout.addLayout(drum_dist_h)
+        
+        # Drum Compression
+        drum_comp_h = QHBoxLayout()
+        drum_comp_h.addWidget(QLabel("Compression:"))
+        self.drum_compression_slider = QSlider(Qt.Orientation.Horizontal)
+        self.drum_compression_slider.setMinimum(0)
+        self.drum_compression_slider.setMaximum(100)
+        self.drum_compression_slider.setValue(100)  # 1.0 default
+        self.drum_compression_value_label = QLabel("1.00")
+        self.drum_compression_slider.valueChanged.connect(self._on_drum_compression_changed)
+        drum_comp_h.addWidget(self.drum_compression_slider, stretch=2)
+        drum_comp_h.addWidget(self.drum_compression_value_label)
+        drum_effects_layout.addLayout(drum_comp_h)
+        
+        drum_effects_group.setLayout(drum_effects_layout)
+        effects_layout.addWidget(drum_effects_group, stretch=1)
+        
+        # LLM Effects GroupBox (1/3 width)
+        llm_effects_group = QGroupBox("LLM Singer")
+        llm_effects_layout = QVBoxLayout()
+        
+        # Auto-tune Amount
+        llm_autotune_h = QHBoxLayout()
+        llm_autotune_h.addWidget(QLabel("Auto-tune:"))
+        self.llm_autotune_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_autotune_slider.setMinimum(0)
+        self.llm_autotune_slider.setMaximum(100)
+        self.llm_autotune_slider.setValue(50)  # 0.5 default
+        self.llm_autotune_value_label = QLabel("0.50")
+        self.llm_autotune_slider.valueChanged.connect(self._on_llm_autotune_changed)
+        llm_autotune_h.addWidget(self.llm_autotune_slider, stretch=2)
+        llm_autotune_h.addWidget(self.llm_autotune_value_label)
+        llm_effects_layout.addLayout(llm_autotune_h)
+        
+        # Reverb Amount
+        llm_reverb_h = QHBoxLayout()
+        llm_reverb_h.addWidget(QLabel("Reverb:"))
+        self.llm_reverb_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_reverb_slider.setMinimum(0)
+        self.llm_reverb_slider.setMaximum(100)
+        self.llm_reverb_slider.setValue(70)  # 0.7 default
+        self.llm_reverb_value_label = QLabel("0.70")
+        self.llm_reverb_slider.valueChanged.connect(self._on_llm_reverb_changed)
+        llm_reverb_h.addWidget(self.llm_reverb_slider, stretch=2)
+        llm_reverb_h.addWidget(self.llm_reverb_value_label)
+        llm_effects_layout.addLayout(llm_reverb_h)
+        
+        # Transpose
+        llm_transpose_h = QHBoxLayout()
+        llm_transpose_h.addWidget(QLabel("Transpose:"))
+        self.llm_transpose_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_transpose_slider.setMinimum(-400)
+        self.llm_transpose_slider.setMaximum(0)
+        self.llm_transpose_slider.setValue(0)
+        self.llm_transpose_value_label = QLabel("0.00")
+        self.llm_transpose_slider.valueChanged.connect(self._on_llm_transpose_changed)
+        llm_transpose_h.addWidget(self.llm_transpose_slider, stretch=2)
+        llm_transpose_h.addWidget(self.llm_transpose_value_label)
+        llm_effects_layout.addLayout(llm_transpose_h)
+        
+        # Playback Interval (how often to play pre-cached phrases)
+        llm_interval_h = QHBoxLayout()
+        llm_interval_h.addWidget(QLabel("Play Interval:"))
+        self.llm_interval_slider = QSlider(Qt.Orientation.Horizontal)
+        self.llm_interval_slider.setMinimum(10)
+        self.llm_interval_slider.setMaximum(120)
+        self.llm_interval_slider.setValue(15)
+        self.llm_interval_value_label = QLabel("15s")
+        self.llm_interval_slider.valueChanged.connect(self._on_llm_interval_changed)
+        llm_interval_h.addWidget(self.llm_interval_slider, stretch=2)
+        llm_interval_h.addWidget(self.llm_interval_value_label)
+        llm_effects_layout.addLayout(llm_interval_h)
+        
+        llm_effects_group.setLayout(llm_effects_layout)
+        effects_layout.addWidget(llm_effects_group, stretch=1)
+        
+        main_v_layout.addLayout(effects_layout)
+        
         # Bottom: Main content (voice widgets, head position, and LLM controls)
         self.main_layout = QHBoxLayout()
         
@@ -798,116 +1028,36 @@ class SynthMonitor(QMainWindow):
         self.update_signal.connect(self.handle_update)
     
     def _create_llm_controls(self):
-        """Create LLM Singer control panel"""
+        """Create LLM Singer lyrics display panel"""
         llm_layout = QVBoxLayout()
         
         # Title
-        title_label = QLabel("LLM Singer")
+        title_label = QLabel("LLM Singer Lyrics")
         title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         llm_layout.addWidget(title_label)
         
-        # Base Prompt
-        prompt_label = QLabel("Base Prompt:")
-        llm_layout.addWidget(prompt_label)
-        
-        self.llm_prompt_text = QTextEdit()
-        self.llm_prompt_text.setPlainText("You are an alchemist trying to find a dance to create a bad spell on a kingdom. Describe what you see in poetic, mystical terms in one short sentence.")
-        self.llm_prompt_text.setMaximumHeight(100)
-        llm_layout.addWidget(self.llm_prompt_text)
-        
-        # Apply prompt button
-        apply_prompt_btn = QPushButton("Apply Prompt")
-        apply_prompt_btn.clicked.connect(self._on_llm_prompt_changed)
-        llm_layout.addWidget(apply_prompt_btn)
-        
-        # Generation Interval slider
-        interval_label = QLabel("Generation Interval:")
-        llm_layout.addWidget(interval_label)
-        
-        interval_h_layout = QHBoxLayout()
-        self.llm_interval_slider = QSlider(Qt.Orientation.Horizontal)
-        self.llm_interval_slider.setMinimum(10)  # 10 seconds
-        self.llm_interval_slider.setMaximum(120)  # 120 seconds
-        self.llm_interval_slider.setValue(15)  # 15s default
-        self.llm_interval_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.llm_interval_slider.setTickInterval(10)
-        self.llm_interval_value_label = QLabel("15s")
-        self.llm_interval_slider.valueChanged.connect(self._on_llm_interval_changed)
-        
-        interval_h_layout.addWidget(self.llm_interval_slider)
-        interval_h_layout.addWidget(self.llm_interval_value_label)
-        llm_layout.addLayout(interval_h_layout)
-        
-        # Auto-tune Amount slider
-        autotune_label = QLabel("Auto-tune Amount:")
-        llm_layout.addWidget(autotune_label)
-        
-        autotune_h_layout = QHBoxLayout()
-        self.llm_autotune_slider = QSlider(Qt.Orientation.Horizontal)
-        self.llm_autotune_slider.setMinimum(0)
-        self.llm_autotune_slider.setMaximum(100)
-        self.llm_autotune_slider.setValue(50)  # 0.5 default
-        self.llm_autotune_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.llm_autotune_slider.setTickInterval(10)
-        self.llm_autotune_value_label = QLabel("0.50")
-        self.llm_autotune_slider.valueChanged.connect(self._on_llm_autotune_changed)
-        
-        autotune_h_layout.addWidget(self.llm_autotune_slider)
-        autotune_h_layout.addWidget(self.llm_autotune_value_label)
-        llm_layout.addLayout(autotune_h_layout)
-        
-        # Reverb Amount slider
-        reverb_label = QLabel("Reverb Amount:")
-        llm_layout.addWidget(reverb_label)
-        
-        reverb_h_layout = QHBoxLayout()
-        self.llm_reverb_slider = QSlider(Qt.Orientation.Horizontal)
-        self.llm_reverb_slider.setMinimum(0)
-        self.llm_reverb_slider.setMaximum(100)
-        self.llm_reverb_slider.setValue(70)  # 0.7 default
-        self.llm_reverb_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.llm_reverb_slider.setTickInterval(10)
-        self.llm_reverb_value_label = QLabel("0.70")
-        self.llm_reverb_slider.valueChanged.connect(self._on_llm_reverb_changed)
-        
-        reverb_h_layout.addWidget(self.llm_reverb_slider)
-        reverb_h_layout.addWidget(self.llm_reverb_value_label)
-        llm_layout.addLayout(reverb_h_layout)
-        
-        # Transpose slider
-        transpose_label = QLabel("Transpose (Octaves):")
-        llm_layout.addWidget(transpose_label)
-        
-        transpose_h_layout = QHBoxLayout()
-        self.llm_transpose_slider = QSlider(Qt.Orientation.Horizontal)
-        self.llm_transpose_slider.setMinimum(-400)  # -4.00 octaves
-        self.llm_transpose_slider.setMaximum(0)     # 0.00 octaves
-        self.llm_transpose_slider.setValue(0)  # 0 octaves default
-        self.llm_transpose_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.llm_transpose_slider.setTickInterval(100)
-        self.llm_transpose_value_label = QLabel("0.00")
-        self.llm_transpose_slider.valueChanged.connect(self._on_llm_transpose_changed)
-        
-        transpose_h_layout.addWidget(self.llm_transpose_slider)
-        transpose_h_layout.addWidget(self.llm_transpose_value_label)
-        llm_layout.addLayout(transpose_h_layout)
-        
         # Current Lyrics Display
-        lyrics_label = QLabel("Current Lyrics:")
-        lyrics_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        llm_layout.addWidget(lyrics_label)
-        
-        self.llm_lyrics_display = QLabel("Initializing...")
+        self.llm_lyrics_display = QLabel("")
         self.llm_lyrics_display.setWordWrap(True)
-        self.llm_lyrics_display.setStyleSheet("background-color: #2a2a2a; padding: 10px; border-radius: 5px; color: #00ff00;")
-        self.llm_lyrics_display.setMinimumHeight(100)
-        llm_layout.addWidget(self.llm_lyrics_display)
+        self.llm_lyrics_display.setStyleSheet("background-color: #2a2a2a; padding: 10px; border-radius: 5px; color: #00ff00; font-size: 12px;")
+        self.llm_lyrics_display.setAlignment(Qt.AlignmentFlag.AlignTop)
+        llm_layout.addWidget(self.llm_lyrics_display, stretch=1)
+        
+        # Prompt text in the lyrics area
+        llm_prompt_label = QLabel("Prompt:")
+        llm_layout.addWidget(llm_prompt_label)
+        self.llm_prompt_text_bottom = QTextEdit()
+        self.llm_prompt_text_bottom.setPlainText("You are an alchemist trying to find a dance to create a bad spell on a kingdom. Describe what you see in poetic, mystical terms in one short sentence.")
+        self.llm_prompt_text_bottom.setMaximumHeight(80)
+        llm_layout.addWidget(self.llm_prompt_text_bottom)
+        
+        # Apply button
+        apply_prompt_btn = QPushButton("Apply")
+        apply_prompt_btn.clicked.connect(self._on_llm_prompt_changed_bottom)
+        llm_layout.addWidget(apply_prompt_btn)
         
         # Connect lyrics update signal
         self.llm_lyrics_update.connect(self._on_lyrics_update)
-        
-        # Add stretch to push everything to the top
-        llm_layout.addStretch()
         
         return llm_layout
     
@@ -916,65 +1066,233 @@ class SynthMonitor(QMainWindow):
         loop_length = value / 10.0  # Convert to seconds
         self.loop_value_label.setText(f"{loop_length:.1f}s")
         self.loop_length_changed.emit(loop_length)
+        self.settings_changed.emit()
     
     def _on_scale_changed(self, scale_name):
         """Handle scale selection changes"""
         self.scale_changed.emit(scale_name)
+        self.settings_changed.emit()
     
     def _on_click_changed(self, state):
         """Handle click checkbox changes"""
         enabled = (state == Qt.CheckState.Checked.value)
         self.click_enabled_changed.emit(enabled)
+        self.settings_changed.emit()
     
     def _on_drum_gain_changed(self, value):
         """Handle drum gain slider changes"""
         gain = value / 100.0  # Convert to 0.0-1.0
         self.drum_gain_value_label.setText(f"{gain:.2f}")
         self.drum_gain_changed.emit(gain)
+        self.settings_changed.emit()
     
     def _on_wave_gain_changed(self, value):
         """Handle wave gain slider changes"""
         gain = value / 100.0  # Convert to 0.0-1.0
         self.wave_gain_value_label.setText(f"{gain:.2f}")
         self.wave_gain_changed.emit(gain)
+        self.settings_changed.emit()
     
     def _on_llm_prompt_changed(self):
-        """Handle LLM prompt changes"""
-        prompt = self.llm_prompt_text.toPlainText()
+        """Handle LLM prompt changes (legacy - kept for compatibility)"""
+        # Use bottom prompt text field if it exists
+        if hasattr(self, 'llm_prompt_text_bottom'):
+            prompt = self.llm_prompt_text_bottom.toPlainText()
+        else:
+            prompt = ""
         self.llm_prompt_changed.emit(prompt)
+        self.settings_changed.emit()
+    
+    def _on_llm_prompt_changed_bottom(self):
+        """Handle LLM prompt changes from bottom text area"""
+        prompt = self.llm_prompt_text_bottom.toPlainText()
+        self.llm_prompt_changed.emit(prompt)
+        self.settings_changed.emit()
     
     def _on_llm_interval_changed(self, value):
         """Handle LLM interval slider changes"""
         self.llm_interval_value_label.setText(f"{value}s")
         self.llm_interval_changed.emit(float(value))
+        self.settings_changed.emit()
     
     def _on_llm_autotune_changed(self, value):
         """Handle LLM auto-tune slider changes"""
         amount = value / 100.0
         self.llm_autotune_value_label.setText(f"{amount:.2f}")
         self.llm_autotune_changed.emit(amount)
+        self.settings_changed.emit()
     
     def _on_llm_reverb_changed(self, value):
         """Handle LLM reverb slider changes"""
         amount = value / 100.0
         self.llm_reverb_value_label.setText(f"{amount:.2f}")
         self.llm_reverb_changed.emit(amount)
+        self.settings_changed.emit()
     
     def _on_llm_transpose_changed(self, value):
         """Handle LLM transpose slider changes"""
         octaves = value / 100.0  # -2.00 to +2.00
         self.llm_transpose_value_label.setText(f"{octaves:+.2f}")
         self.llm_transpose_changed.emit(octaves)
+        self.settings_changed.emit()
     
     def _on_llm_gain_changed(self, value):
         """Handle LLM gain slider changes"""
         gain = value / 100.0
-        self.llm_gain_value_label.setText(f"{gain:.2f}")
+        self.llm_gain_value_label.setText(f"{gain:.3f}")
         self.llm_gain_changed.emit(gain)
+        self.settings_changed.emit()
+    
+    def _on_drum_distortion_changed(self, value):
+        """Handle drum distortion slider changes"""
+        amount = value / 100.0
+        self.drum_distortion_value_label.setText(f"{amount:.2f}")
+        self.drum_distortion_changed.emit(amount)
+        self.settings_changed.emit()
+    
+    def _on_drum_compression_changed(self, value):
+        """Handle drum compression slider changes"""
+        amount = value / 100.0
+        self.drum_compression_value_label.setText(f"{amount:.2f}")
+        self.drum_compression_changed.emit(amount)
+        self.settings_changed.emit()
+    
+    def _on_wave_distortion_changed(self, value):
+        """Handle wave distortion slider changes"""
+        amount = value / 100.0
+        self.wave_distortion_value_label.setText(f"{amount:.2f}")
+        self.wave_distortion_changed.emit(amount)
+        self.settings_changed.emit()
+    
+    def _on_wave_lfo_changed(self, value):
+        """Handle wave LFO slider changes"""
+        amount = value / 100.0
+        self.wave_lfo_value_label.setText(f"{amount:.2f}")
+        self.wave_lfo_changed.emit(amount)
+        self.settings_changed.emit()
+    
+    def _on_wave_lfo_slowdown_changed(self, value):
+        """Handle wave LFO slowdown slider changes"""
+        self.wave_lfo_slowdown_value_label.setText(f"{value}")
+        self.wave_lfo_slowdown_changed.emit(float(value))
+        self.settings_changed.emit()
+    
+    def _on_wave_min_reverb_changed(self, value):
+        """Handle wave min reverb slider changes"""
+        amount = value / 100.0
+        self.wave_min_reverb_value_label.setText(f"{amount:.2f}")
+        self.wave_min_reverb_changed.emit(amount)
+        self.settings_changed.emit()
+    
+    def _on_wave_max_armlen_changed(self, value):
+        """Handle wave max arm length slider changes"""
+        self.wave_max_armlen_value_label.setText(f"{value}mm")
+        self.wave_max_armlen_changed.emit(float(value))
+        self.settings_changed.emit()
+    
+    def _on_wave_min_armlen_changed(self, value):
+        """Handle wave min arm length slider changes"""
+        self.wave_min_armlen_value_label.setText(f"{value}mm")
+        self.wave_min_armlen_changed.emit(float(value))
+        self.settings_changed.emit()
+    
+    def _on_wave_octave_high_changed(self, value):
+        """Handle wave high octave range slider changes"""
+        octave = value / 1000.0
+        self.wave_octave_high_value_label.setText(f"{octave:+.2f}")
+        self.wave_octave_high_changed.emit(octave)
+        self.settings_changed.emit()
+    
+    def _on_wave_octave_low_changed(self, value):
+        """Handle wave low octave range slider changes"""
+        octave = value / 1000.0
+        self.wave_octave_low_value_label.setText(f"{octave:+.2f}")
+        self.wave_octave_low_changed.emit(octave)
+        self.settings_changed.emit()
     
     def _on_lyrics_update(self, lyrics):
         """Handle lyrics updates from LLM Singer"""
         self.llm_lyrics_display.setText(lyrics)
+    
+    def update_root_note_display(self, note_name, frequency):
+        """Update the root note display label"""
+        self.root_note_label.setText(f"Root: {note_name} ({frequency:.0f}Hz)")
+    
+    def get_all_settings(self):
+        """Get all current GUI settings as a dictionary"""
+        return {
+            "loop_length": self.loop_slider.value() / 10.0,
+            "scale": self.scale_combo.currentText(),
+            "click_enabled": self.click_checkbox.isChecked(),
+            "drum_gain": self.drum_gain_slider.value() / 100.0,
+            "drum_distortion": self.drum_distortion_slider.value() / 100.0,
+            "drum_compression": self.drum_compression_slider.value() / 100.0,
+            "wave_gain": self.wave_gain_slider.value() / 100.0,
+            "wave_distortion": self.wave_distortion_slider.value() / 100.0,
+            "wave_lfo_amount": self.wave_lfo_slider.value() / 100.0,
+            "wave_lfo_slowdown": float(self.wave_lfo_slowdown_slider.value()),
+            "wave_min_reverb": self.wave_min_reverb_slider.value() / 100.0,
+            "wave_max_armlen": float(self.wave_max_armlen_slider.value()),
+            "wave_min_armlen": float(self.wave_min_armlen_slider.value()),
+            "wave_octave_high": self.wave_octave_high_slider.value() / 1000.0,
+            "wave_octave_low": self.wave_octave_low_slider.value() / 1000.0,
+            "llm_gain": self.llm_gain_slider.value() / 100.0,
+            "llm_prompt": self.llm_prompt_text_bottom.toPlainText() if hasattr(self, 'llm_prompt_text_bottom') else "",
+            "llm_interval": float(self.llm_interval_slider.value()),
+            "llm_autotune": self.llm_autotune_slider.value() / 100.0,
+            "llm_reverb": self.llm_reverb_slider.value() / 100.0,
+            "llm_transpose": self.llm_transpose_slider.value() / 100.0,
+        }
+    
+    def set_all_settings(self, settings):
+        """Set all GUI settings from a dictionary"""
+        # Block signals during bulk update to avoid triggering multiple saves
+        self.blockSignals(True)
+        
+        if "loop_length" in settings:
+            self.loop_slider.setValue(int(settings["loop_length"] * 10))
+        if "scale" in settings:
+            self.scale_combo.setCurrentText(settings["scale"])
+        if "click_enabled" in settings:
+            self.click_checkbox.setChecked(settings["click_enabled"])
+        if "drum_gain" in settings:
+            self.drum_gain_slider.setValue(int(settings["drum_gain"] * 100))
+        if "drum_distortion" in settings:
+            self.drum_distortion_slider.setValue(int(settings["drum_distortion"] * 100))
+        if "drum_compression" in settings:
+            self.drum_compression_slider.setValue(int(settings["drum_compression"] * 100))
+        if "wave_gain" in settings:
+            self.wave_gain_slider.setValue(int(settings["wave_gain"] * 100))
+        if "wave_distortion" in settings:
+            self.wave_distortion_slider.setValue(int(settings["wave_distortion"] * 100))
+        if "wave_lfo_amount" in settings:
+            self.wave_lfo_slider.setValue(int(settings["wave_lfo_amount"] * 100))
+        if "wave_lfo_slowdown" in settings:
+            self.wave_lfo_slowdown_slider.setValue(int(settings["wave_lfo_slowdown"]))
+        if "wave_min_reverb" in settings:
+            self.wave_min_reverb_slider.setValue(int(settings["wave_min_reverb"] * 100))
+        if "wave_max_armlen" in settings:
+            self.wave_max_armlen_slider.setValue(int(settings["wave_max_armlen"]))
+        if "wave_min_armlen" in settings:
+            self.wave_min_armlen_slider.setValue(int(settings["wave_min_armlen"]))
+        if "wave_octave_high" in settings:
+            self.wave_octave_high_slider.setValue(int(settings["wave_octave_high"] * 1000))
+        if "wave_octave_low" in settings:
+            self.wave_octave_low_slider.setValue(int(settings["wave_octave_low"] * 1000))
+        if "llm_gain" in settings:
+            self.llm_gain_slider.setValue(int(settings["llm_gain"] * 100))
+        if "llm_prompt" in settings and hasattr(self, 'llm_prompt_text_bottom'):
+            self.llm_prompt_text_bottom.setPlainText(settings["llm_prompt"])
+        if "llm_interval" in settings:
+            self.llm_interval_slider.setValue(int(settings["llm_interval"]))
+        if "llm_autotune" in settings:
+            self.llm_autotune_slider.setValue(int(settings["llm_autotune"] * 100))
+        if "llm_reverb" in settings:
+            self.llm_reverb_slider.setValue(int(settings["llm_reverb"] * 100))
+        if "llm_transpose" in settings:
+            self.llm_transpose_slider.setValue(int(settings["llm_transpose"] * 100))
+        
+        self.blockSignals(False)
 
     def handle_update(self, all_voice_data):
         active_ids = list(all_voice_data.keys())

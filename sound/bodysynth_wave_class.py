@@ -6,6 +6,7 @@ Class-based version of bodysynth_wave.py for modular integration
 import numpy as np
 import math
 import threading
+import time
 from pyo import *
 
 from senseSpaceLib.senseSpace.protocol import Frame
@@ -28,7 +29,7 @@ REVERB_DAMP = 0.9
 
 DISTORTION_AMOUNT = 0.0  # Soft saturation amount (0.0-1.0)
 
-LFO_AMOUNT = 0.2  # LFO amplitude modulation amount (0.0=off, 1.0=max influence)
+LFO_AMOUNT = 0.5  # LFO amplitude modulation amount (0.0=off, 1.0=max influence)
 LFO_SLOWDOWN = 200.0
 
 # Musical scales (semitones from root note)
@@ -89,10 +90,12 @@ def quantize_frequency_to_scale(freq, scale_name="Chromatic (None)", root_freq=5
 
 class PyoWavetableVoice:
     """Pyo-based wavetable oscillator with reverb and LFO amplitude modulation"""
-    def __init__(self, voice_id, table_data: np.ndarray, gain: float = 1.0, reverb_mix: float = 0.0, channels: int = 2):
+    def __init__(self, voice_id, table_data: np.ndarray, gain: float = 1.0, reverb_mix: float = 0.0, channels: int = 2, lfo_slowdown: float = LFO_SLOWDOWN, lfo_amount: float = LFO_AMOUNT):
         self.id = voice_id
         self.lock = threading.Lock()
         self.channels = channels
+        self.lfo_slowdown = lfo_slowdown
+        self.lfo_amount = lfo_amount
         
         # Audio wavetable
         self.table = DataTable(size=len(table_data), init=table_data.tolist())
@@ -101,15 +104,22 @@ class PyoWavetableVoice:
         # LFO wavetable (same shape as audio, but much slower frequency)
         self.lfo_table = DataTable(size=len(table_data), init=table_data.tolist())
         audio_freq = SAMPLE_RATE / len(table_data)
-        lfo_freq = audio_freq / LFO_SLOWDOWN
+        lfo_freq = audio_freq / self.lfo_slowdown
+        self.lfo_freq_ctrl = Sig(lfo_freq)
         
         # LFO oscillator - output range needs to be 0 to 1 for amplitude modulation
         # We'll scale and offset the LFO to be positive
-        self.lfo_osc = Osc(table=self.lfo_table, freq=lfo_freq, mul=0.5, add=0.5)
+        self.lfo_osc = Osc(table=self.lfo_table, freq=self.lfo_freq_ctrl, mul=0.5, add=0.5)
         
-        # Audio oscillator - modulated by LFO based on LFO_AMOUNT (0.0 to 1.0)
-        # Interpolate between constant gain (LFO_AMOUNT=0) and full LFO modulation (LFO_AMOUNT=1)
-        lfo_modulation = (1.0 - LFO_AMOUNT) + (self.lfo_osc * LFO_AMOUNT)
+        # LFO amount control (0.0 = no LFO, 1.0 = full LFO modulation)
+        self.lfo_amount_ctrl = Sig(self.lfo_amount)
+        
+        # Audio oscillator - modulated by LFO based on lfo_amount (0.0 to 1.0)
+        # Interpolate between constant gain (lfo_amount=0) and full LFO modulation (lfo_amount=1)
+        # Formula: gain * [(1 - lfo_amount) + (lfo_osc * lfo_amount)]
+        # When lfo_amount=0: gain * 1.0 (constant)
+        # When lfo_amount=1: gain * lfo_osc (full modulation from 0 to 1)
+        lfo_modulation = (1.0 - self.lfo_amount_ctrl) + (self.lfo_osc * self.lfo_amount_ctrl)
         self.osc = Osc(table=self.table, freq=self.freq_ctrl, mul=lfo_modulation * gain)
         
         # Create reverb effect
@@ -141,21 +151,36 @@ class PyoWavetableVoice:
             self.lfo_table = DataTable(size=len(new_table), init=new_table.tolist())
             self.lfo_osc.setTable(self.lfo_table)
             
-            # Update LFO frequency (1000x slower than audio)
-            lfo_freq = new_freq / LFO_SLOWDOWN
-            self.lfo_osc.setFreq(lfo_freq)
+            # Update LFO frequency based on current slowdown setting
+            lfo_freq = new_freq / self.lfo_slowdown
+            self.lfo_freq_ctrl.value = lfo_freq
     
     def update_gain(self, gain):
         self.gain = gain
-        # Update the oscillator multiplier - with LFO modulation based on LFO_AMOUNT
-        # Interpolate between constant gain (LFO_AMOUNT=0) and full LFO modulation (LFO_AMOUNT=1)
-        lfo_modulation = (1.0 - LFO_AMOUNT) + (self.lfo_osc * LFO_AMOUNT)
+        # Update the oscillator multiplier - with LFO modulation based on current lfo_amount
+        # Interpolate between constant gain (lfo_amount=0) and full LFO modulation (lfo_amount=1)
+        lfo_modulation = (1.0 - self.lfo_amount_ctrl) + (self.lfo_osc * self.lfo_amount_ctrl)
         self.osc.mul = lfo_modulation * self.gain
     
     def update_reverb(self, reverb_mix: float):
         with self.lock:
             # reverb_mix should be 0.0 (dry) to 1.0 (wet)
             self.reverb_mix.value = reverb_mix
+    
+    def update_lfo_slowdown(self, lfo_slowdown: float):
+        """Update LFO slowdown factor and recalculate LFO frequency"""
+        with self.lock:
+            self.lfo_slowdown = lfo_slowdown
+            # Recalculate LFO frequency based on current audio frequency
+            audio_freq = self.freq_ctrl.value
+            lfo_freq = audio_freq / self.lfo_slowdown
+            self.lfo_freq_ctrl.value = lfo_freq
+    
+    def update_lfo_amount(self, lfo_amount: float):
+        """Update LFO modulation amount (0.0 = no LFO, 1.0 = full modulation)"""
+        with self.lock:
+            self.lfo_amount = lfo_amount
+            self.lfo_amount_ctrl.value = lfo_amount
     
     def stop(self):
         self.stereo.stop()
@@ -167,14 +192,33 @@ class PyoWavetableVoice:
 class WavetableSynth:
     """Wavetable synthesizer that generates tones from arm geometry"""
     
-    def __init__(self, pyo_server, gain=0.3, max_voices=10, sample_rate=SAMPLE_RATE, channels=2):
+    def __init__(self, pyo_server, gain=0.3, max_voices=10, sample_rate=SAMPLE_RATE, channels=2, root_change_callback=None, shared_state=None):
         self.pyo_server = pyo_server
         self.gain = gain
         self.sample_rate = sample_rate
         self.channels = channels
         self.voices = {}
         self.voices_lock = threading.Lock()
-        self.current_scale = "Dorian"  # Default scale
+        self.shared_state = shared_state  # Optional shared state from modular system
+        self.current_scale = "Dorian"  # Default scale (can be overridden by shared state)
+        
+        # Callback for root frequency changes
+        self.root_change_callback = root_change_callback
+        
+        # Adjustable parameters
+        self.distortion_amount = DISTORTION_AMOUNT
+        self.lfo_amount = LFO_AMOUNT
+        self.lfo_slowdown = LFO_SLOWDOWN
+        self.min_reverb_wet = MIN_REVERB_WET
+        self.max_armlen = MAX_ARMLEN
+        self.min_armlen = MIN_ARMLEN
+        # Use octave offsets from root instead of fixed frequencies
+        self.octave_range_low = -2.0   # octaves below root
+        self.octave_range_high = 2.0   # octaves above root
+        
+        # Fallback root frequency (220 Hz = A) if no shared state
+        # When shared_state is provided, it will be used instead
+        self.root_freq = 220.0
         
         # Pre-create a pool of voices to avoid threading issues
         # Create dummy wavetable for initialization
@@ -182,7 +226,7 @@ class WavetableSynth:
         self.voice_pool = {}
         for i in range(max_voices):
             voice_id = f"pool_{i}"
-            self.voice_pool[voice_id] = PyoWavetableVoice(voice_id, dummy_table, gain=0.0, reverb_mix=0.0, channels=self.channels)
+            self.voice_pool[voice_id] = PyoWavetableVoice(voice_id, dummy_table, gain=0.0, reverb_mix=0.0, channels=self.channels, lfo_slowdown=self.lfo_slowdown, lfo_amount=self.lfo_amount)
         
         self.available_voices = list(self.voice_pool.keys())
         self.person_to_voice = {}  # Map person_id to pool voice_id
@@ -236,14 +280,23 @@ class WavetableSynth:
         horizontal_extent = np.sqrt(x_extent**2 + z_extent**2)
         
         # Use horizontal_extent (combined X-Z spread) for frequency calculation
-        clipped_extent = np.clip(horizontal_extent, MIN_ARMLEN, MAX_ARMLEN)
-        norm_extent = float(np.clip((clipped_extent - MIN_ARMLEN) / (MAX_ARMLEN - MIN_ARMLEN + 1e-12), 0.0, 1.0))
-        # Exponential (musical) mapping: map normalized extent to frequency on a log scale
-        # Keep same endpoints: norm_extent=1 -> MIN_FREQ, norm_extent=0 -> MAX_FREQ
-        freq = MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** (1.0 - norm_extent))
+        clipped_extent = np.clip(horizontal_extent, self.min_armlen, self.max_armlen)
+        norm_extent = float(np.clip((clipped_extent - self.min_armlen) / (self.max_armlen - self.min_armlen + 1e-12), 0.0, 1.0))
+        
+        # Map normalized extent to octave offset from root
+        # norm_extent=0 (min arm length) -> octave_range_high octaves above root
+        # norm_extent=1 (max arm length) -> octave_range_low octaves below root
+        octave_offset = self.octave_range_high + (self.octave_range_low - self.octave_range_high) * norm_extent
+        
+        # Get current root frequency and scale from shared state if available
+        current_root_freq = self.shared_state.get_root_freq() if self.shared_state else self.root_freq
+        current_scale = self.shared_state.get_scale() if self.shared_state else self.current_scale
+        
+        # Calculate frequency as root * 2^(octave_offset)
+        freq = current_root_freq * (2.0 ** octave_offset)
 
-        # Quantize frequency to selected scale
-        quantized_freq = quantize_frequency_to_scale(freq, self.current_scale)
+        # Quantize frequency to selected scale using current root frequency
+        quantized_freq = quantize_frequency_to_scale(freq, current_scale, current_root_freq)
 
         # Use quantized frequency for table length calculation
         table_len = max(3, int(round(self.sample_rate / quantized_freq)))
@@ -267,8 +320,8 @@ class WavetableSynth:
         wavetable = np.interp(idx, np.arange(len(mirrored_coords)), mirrored_coords).astype(np.float32)
         
         # Apply soft distortion/saturation using tanh
-        if DISTORTION_AMOUNT > 0:
-            drive = 1.0 + DISTORTION_AMOUNT * 3.0  # Map 0-1 to 1-4
+        if self.distortion_amount > 0:
+            drive = 1.0 + self.distortion_amount * 3.0  # Map 0-1 to 1-4
             wavetable = np.tanh(wavetable * drive) / np.tanh(drive)
         
         # Angle is calculated from best_fit_line_xz (0-90° range)
@@ -306,11 +359,11 @@ class WavetableSynth:
             
             # freq is already quantized in make_wavetable_mirror
             
-            # Map angle (0-90°) to reverb range: MIN_REVERB_WET to 1.0
-            # 0° = line along X-axis (horizontal) → min reverb
-            # 90° = line along Z-axis (perpendicular to X) → max reverb
-            angle_normalized = float(np.clip(angle / 90.0, 0.0, 1.0))
-            reverb_amount = MIN_REVERB_WET + angle_normalized * (1.0 - MIN_REVERB_WET)
+                        # Map angle (0-90°) to reverb range: min_reverb_wet to 1.0
+            # 0° (along X) = minimum reverb
+            # 90° (along Z) = maximum reverb
+            angle_normalized = angle / 90.0
+            reverb_amount = self.min_reverb_wet + angle_normalized * (1.0 - self.min_reverb_wet)
             
             # Debug output
             #print(f"[WavetableSynth] Person {person_id}: horizontal_extent={horizontal_extent:.0f}mm, freq={freq:.1f}Hz, angle={angle:.1f}°, reverb={reverb_amount:.2f}")
@@ -371,6 +424,56 @@ class WavetableSynth:
                 if voice_id in self.voice_pool:
                     self.voice_pool[voice_id].update_gain(gain)
         print(f"[WavetableSynth] Master gain set to {gain:.2f}")
+    
+    def set_distortion(self, distortion: float):
+        """Set distortion amount (0.0-1.0)"""
+        self.distortion_amount = distortion
+        print(f"[WavetableSynth] Distortion set to {distortion:.2f}")
+    
+    def set_lfo_amount(self, lfo_amount: float):
+        """Set LFO modulation amount (0.0-1.0)"""
+        self.lfo_amount = lfo_amount
+        # Update all active voices
+        with self.voices_lock:
+            for person_id, voice_id in self.person_to_voice.items():
+                if voice_id in self.voice_pool:
+                    self.voice_pool[voice_id].update_lfo_amount(lfo_amount)
+        print(f"[WavetableSynth] LFO amount set to {lfo_amount:.2f}")
+    
+    def set_lfo_slowdown(self, lfo_slowdown: float):
+        """Set LFO slowdown factor (higher = slower LFO)"""
+        self.lfo_slowdown = lfo_slowdown
+        # Update all active voices
+        with self.voices_lock:
+            for person_id, voice_id in self.person_to_voice.items():
+                if voice_id in self.voice_pool:
+                    self.voice_pool[voice_id].update_lfo_slowdown(lfo_slowdown)
+        print(f"[WavetableSynth] LFO slowdown set to {lfo_slowdown:.1f}")
+    
+    def set_min_reverb(self, min_reverb: float):
+        """Set minimum reverb wetness (0.0-1.0)"""
+        self.min_reverb_wet = min_reverb
+        print(f"[WavetableSynth] Min reverb set to {min_reverb:.2f}")
+    
+    def set_max_armlen(self, max_armlen: float):
+        """Set maximum arm length in mm"""
+        self.max_armlen = max_armlen
+        print(f"[WavetableSynth] Max arm length set to {max_armlen:.0f} mm")
+    
+    def set_min_armlen(self, min_armlen: float):
+        """Set minimum arm length in mm"""
+        self.min_armlen = min_armlen
+        print(f"[WavetableSynth] Min arm length set to {min_armlen:.0f} mm")
+    
+    def set_octave_range_high(self, octaves: float):
+        """Set octave range above root (for short arms)"""
+        self.octave_range_high = octaves
+        print(f"[WavetableSynth] High octave range set to {octaves:+.1f} octaves from root")
+    
+    def set_octave_range_low(self, octaves: float):
+        """Set octave range below root (for long arms)"""
+        self.octave_range_low = octaves
+        print(f"[WavetableSynth] Low octave range set to {octaves:+.1f} octaves from root")
     
     def stop(self):
         """Stop all voices"""

@@ -103,6 +103,13 @@ class LLMSinger:
         self.root_freq = 440.0
         self.current_note_index = 0  # Which note in the scale we're currently on
         
+        # Loop tracking for root frequency changes
+        self.last_loop_count = 0
+        self.root_change_interval = 4  # Change root every 4 loops
+        # Possible root frequencies (C, D, E, F, G, A, Bb)
+        self.root_frequencies = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 466.16]
+        self.current_root_index = 5  # Start with A (440 Hz)
+        
         # Melody generation
         self.current_melody = []  # List of note indices for the current phrase
         self.melody_note_duration = 0.5  # Duration of each note in seconds
@@ -710,3 +717,41 @@ class LLMSinger:
         
         semitones = scale[self.current_note_index]
         print(f"[LLMSinger] Note: {self.current_note_index} (semitone: {semitones}, shift: {shift:.1f} Hz)")
+    
+    def update_loop_count(self, loop_count):
+        """Update with the current drum loop count and change root frequency every 4 loops
+        
+        Args:
+            loop_count: Current loop count from drum sequencer
+        """
+        # Check if we've crossed a 4-loop boundary
+        if loop_count > 0 and loop_count != self.last_loop_count:
+            if loop_count % self.root_change_interval == 0:
+                # Change to next root frequency
+                self.current_root_index = (self.current_root_index + 1) % len(self.root_frequencies)
+                new_root = self.root_frequencies[self.current_root_index]
+                
+                # Update root frequency
+                old_root = self.root_freq
+                self.root_freq = new_root
+                
+                # Update the flatten shift to target the new root
+                self.flatten_shift = self.root_freq - self.speech_fundamental
+                if hasattr(self, 'flattener'):
+                    self.flattener.shift = self.flatten_shift
+                
+                # Update transpose shift (based on new root)
+                transpose_shift = self.transpose * self.root_freq
+                if hasattr(self, 'transpose_shifter'):
+                    self.transpose_shifter.shift = transpose_shift
+                
+                # Recalculate current pitch shift for melody
+                if len(self.current_melody) > 0:
+                    shift = self._calculate_scale_shift(self.current_note_index)
+                    if hasattr(self, 'pitch_shift'):
+                        self.pitch_shift.shift = shift
+                
+                note_names = ['C', 'D', 'E', 'F', 'G', 'A', 'Bb']
+                print(f"[LLMSinger] *** ROOT CHANGE at loop {loop_count}: {note_names[self.current_root_index]} ({new_root:.1f} Hz) ***")
+            
+            self.last_loop_count = loop_count

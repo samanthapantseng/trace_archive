@@ -285,6 +285,10 @@ class DrumSequencer:
         self.loop_length = loop_length
         self.channels = channels
         
+        # Adjustable parameters
+        self.distortion = DRUM_DISTORTION
+        self.compression = DRUM_COMPRESSION
+        self.master_gain = 1.0
         
         self.loop_start_time = None
         self.last_loop_position = 0.0
@@ -293,11 +297,11 @@ class DrumSequencer:
         self.debug_max_volume = False
         
         # Define drum parameters for all possible drum types
-        # Note: distortion and compression from global config will be added when generating samples
+        # Note: distortion and compression from instance variables will be added when generating samples
         all_drum_params = [
-            {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': DRUM_DISTORTION, 'tone': 0.3, 'decay_rate': 1.5, 'compression': DRUM_COMPRESSION},
-            {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': DRUM_DISTORTION, 'tone': 0.6, 'decay_rate': 1.2, 'compression': DRUM_COMPRESSION},
-            {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': DRUM_DISTORTION * 0.5, 'tone': 0.7, 'decay_rate': 0.7, 'compression': DRUM_COMPRESSION}
+            {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': self.distortion, 'tone': 0.3, 'decay_rate': 1.5, 'compression': self.compression},
+            {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': self.distortion, 'tone': 0.6, 'decay_rate': 1.2, 'compression': self.compression},
+            {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': self.distortion * 0.5, 'tone': 0.7, 'decay_rate': 0.7, 'compression': self.compression}
         ]
         
         # Generate drum parameters for all lanes
@@ -352,6 +356,42 @@ class DrumSequencer:
         """Set overall gain/volume for all drum samples"""
         self.master_gain = gain
         print(f"[DrumSequencer] Master gain set to {gain:.2f}")
+    
+    def set_distortion(self, distortion: float):
+        """Set distortion amount and regenerate samples"""
+        self.distortion = distortion
+        self._regenerate_samples()
+        print(f"[DrumSequencer] Distortion set to {distortion:.2f}")
+    
+    def set_compression(self, compression: float):
+        """Set compression amount and regenerate samples"""
+        self.compression = compression
+        self._regenerate_samples()
+        print(f"[DrumSequencer] Compression set to {compression:.2f}")
+    
+    def _regenerate_samples(self):
+        """Regenerate all drum samples with current parameters"""
+        # Regenerate samples with new parameters
+        all_drum_params = [
+            {'base_freq': 60, 'duration': 0.5, 'drum_type': 'kick', 'distortion': self.distortion, 'tone': 0.3, 'decay_rate': 1.5, 'compression': self.compression},
+            {'base_freq': 200, 'duration': 0.3, 'drum_type': 'snare', 'distortion': self.distortion, 'tone': 0.6, 'decay_rate': 1.2, 'compression': self.compression},
+            {'base_freq': 5000, 'duration': 0.8, 'drum_type': 'cymbal', 'distortion': self.distortion * 0.5, 'tone': 0.7, 'decay_rate': 0.7, 'compression': self.compression}
+        ]
+        
+        for lane_idx in range(self.num_lanes):
+            base_params = all_drum_params[lane_idx % len(all_drum_params)].copy()
+            if lane_idx >= len(all_drum_params):
+                cycle = lane_idx // len(all_drum_params)
+                base_params['base_freq'] *= (1.0 + cycle * 0.1)
+            
+            # Regenerate sample
+            new_sample = generate_drum_variant(**base_params)
+            self.sample_banks[lane_idx] = new_sample
+            
+            # Update the voice's table
+            if lane_idx in self.sample_voices:
+                voice = self.sample_voices[lane_idx]
+                voice.table.replace(new_sample.tolist())
     
     def quantize_z(self, z, zmin, zmax):
         """Map Z position to a lane index"""
@@ -488,6 +528,7 @@ class DrumSequencer:
         
         return {
             'loop_position': current_loop_position,
+            'loop_count': current_loop_count,
             'new_loop': new_loop
         }
     
