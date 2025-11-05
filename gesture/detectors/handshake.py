@@ -14,19 +14,27 @@ class HandshakeDetector:
     """Detect when two people's right hands come close together."""
 
     def __init__(self):
-        self._prev_touching = set()  # Track active handshakes
-        self._threshold_mm = 200.0   # 20 cm proximity
+        self._prev_touching = set()   # Track pairs currently in contact
+        self._last_trigger = {}       # Track last trigger per pair
+        self._threshold_mm = 200.0    # 20 cm proximity
+        self._cooldown = 1.0          # seconds between allowed triggers per pair
 
     def _get_hand_pos(self, person: Person):
-        """Get the right-hand (or wrist) position."""
+        """Get the right-hand (or wrist) position as QVector3D."""
         skel = getattr(person, 'skeleton', None) or []
+        if not skel:
+            return None
+
         try:
             idx = J.RIGHT_HAND.value
         except Exception:
             idx = J.RIGHT_WRIST.value
+
         if idx < len(skel):
             node = skel[idx]
-            return getattr(node, 'pos', None)
+            pos = getattr(node, 'pos', None)
+            if pos:
+                return QVector3D(float(pos.x), float(pos.y), float(pos.z))
         return None
 
     def process(self, frame: Frame, gl_context=None):
@@ -36,24 +44,36 @@ class HandshakeDetector:
             self._prev_touching.clear()
             return events
 
+        # Collect hand positions
         hands = {}
         for p in frame.people:
             hp = self._get_hand_pos(p)
-            if hp:
+            if hp is not None:
                 hands[getattr(p, 'id', id(p))] = hp
 
-        current = set()
+        current_touching = set()
+
+        # Check every pair of hands
         for a, b in itertools.combinations(hands.keys(), 2):
             pa, pb = hands[a], hands[b]
+            if pa is None or pb is None:
+                continue
+
             d = (pa - pb).length()
             if d <= self._threshold_mm:
                 pair = tuple(sorted((a, b)))
-                current.add(pair)
+                current_touching.add(pair)
 
-                if pair not in self._prev_touching:
-                    ts = getattr(frame, 'timestamp', time.time())
+                # cooldown check
+                now = time.time()
+                last_time = self._last_trigger.get(pair, 0)
+                cooldown_ok = (now - last_time) >= self._cooldown
+
+                if pair not in self._prev_touching and cooldown_ok:
+                    ts = getattr(frame, 'timestamp', now)
                     dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                     contact = (pa + pb) * 0.5
+
                     events.append({
                         "type": "handshake",
                         "timestamp": ts,
@@ -61,6 +81,8 @@ class HandshakeDetector:
                         "people": pair,
                         "pos": (int(contact.x()), int(contact.y()), int(contact.z()))
                     })
+
+                    self._last_trigger[pair] = now
 
                 # Optional visual sphere
                 if gl_context:
@@ -76,5 +98,5 @@ class HandshakeDetector:
                     except Exception as e:
                         print(f"[OpenGL error while drawing handshake sphere] {e}")
 
-        self._prev_touching = current
+        self._prev_touching = current_touching
         return events
