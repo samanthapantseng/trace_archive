@@ -43,7 +43,7 @@ class CustomSkeletonWidget(SkeletonGLWidget):
         self.sender = MultiSender([
             # Change IP depending on computer being used
             ("192.168.1.18", 8000), # Receiving for TD 
-            ("192.168.1.10", 8001), # Receiving for Sound
+            ("192.168.1.13", 8001), # Receiving for Sound
         ])
         # self.min_confidence = 60.0 # Threshold for considering a person valid
 
@@ -81,12 +81,15 @@ class CustomSkeletonWidget(SkeletonGLWidget):
         )"""
 
     def draw_custom(self, frame):
+        #print(f"[FRAME] Processing frame at timestamp {getattr(frame, 'timestamp', 'N/A')}")
+
         for detector in self.detectors:
             events = detector.process(frame, gl_context=True)
             for e in events:
-                msg = f"[{e['type'].upper()}]|time={e['time_str']}|pos={e['pos']}" # Add for people tag - {e['people']}
+                msg = f"time={e['time_str']}|pos={e['pos']}".strip() # Add for people tag - {e['people']}
+                addr = f"/{e['type']}".strip()
                 print(msg) #Print to console
-                self.sender.send(f"/{e['type']}", msg) #Send via OSC
+                self.sender.send(addr, msg) #Send via OSC
 
 def main():
     parser = argparse.ArgumentParser(description="SenseSpace Detection Sphere")
