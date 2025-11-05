@@ -9,6 +9,7 @@ if os.path.isdir(libs_path) and libs_path not in sys.path:
 
 from senseSpaceLib.senseSpace.vizClient import VisualizationClient
 from senseSpaceLib.senseSpace.vizWidget import SkeletonGLWidget
+from senseSpaceLib.senseSpace.visualization import draw_skeletons_with_bones
 from pythonosc import udp_client
 
 # Import detectors 
@@ -17,7 +18,7 @@ from detectors.high_five import HighFiveDetector
 from detectors.hug import HugDetector
 from detectors.arm_stretch import ArmStretchDetector
 from detectors.arm_spread import ArmSpreadDetector 
-from detectors.handshake import HandshakeDetector
+#from detectors.handshake import HandshakeDetector
 
 class TDsender:
     def __init__(self, ip="127.0.0.1", port=7000):
@@ -34,7 +35,7 @@ class TDsender:
 class CustomSkeletonWidget(SkeletonGLWidget):
     def onInit(self):
         self.sender = TDsender("127.0.0.1", 7000)
-
+        # self.min_confidence = 60.0 # Threshold for considering a person valid
 
         # Load detectors
         self.detectors = [
@@ -43,16 +44,37 @@ class CustomSkeletonWidget(SkeletonGLWidget):
             HugDetector(),
             ArmStretchDetector(),
             ArmSpreadDetector(),
-            HandshakeDetector()
+            #HandshakeDetector()
         ]
 
         print(f"[INIT] Loaded {len(self.detectors)} detectors.")
+
+    """def draw_skeletons(self, frame):
+        #Override the filter of low confidence skeletons
+        if not hasattr(frame, 'people') or not frame.people:
+            return
+        
+        # Filter low confidence people
+        filtered_people = [
+            person for person in frame.people
+            if person.confidence >= self.min_confidence
+        ]
+
+        if not filtered_people:
+            return
+    
+        draw_skeletons_with_bones(
+            filtered_people,
+            joint_color=(0.2, 0.8, 1.0),
+            bone_color=(0.8, 0.2, 0.2),
+            show_orientation=self.show_orientation,
+        )"""
 
     def draw_custom(self, frame):
         for detector in self.detectors:
             events = detector.process(frame, gl_context=True)
             for e in events:
-                msg = f"[{e['type'].upper()}] {e['time_str']} - {e['pos']}" # Add for people tag - {e['people']}
+                msg = f"[{e['type'].upper()}]|time={e['time_str']}|pos={e['pos']}" # Add for people tag - {e['people']}
                 print(msg) #Print to console
                 self.sender.send(f"/{e['type']}", msg) #Send to TouchDesigner
 

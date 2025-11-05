@@ -58,7 +58,7 @@ class HeadBumpDetector:
                         "type": "head_bump",
                         "timestamp": ts,
                         "time_str": dt,
-                        #"people": pair,
+                        "people": pair,
                         "pos": (int(contact.x()), int(contact.y()), int(contact.z()))
                     })
 

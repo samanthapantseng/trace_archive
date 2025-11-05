@@ -15,7 +15,7 @@ class ArmSpreadDetector:
     def __init__(self):
         self._prev_spread = {}
         self._last_trigger = {}
-        self._cooldown = 0.5  # seconds between triggers (prevents spam)
+        #self._cooldown = 0.5  # seconds between triggers (prevents spam)
 
     def _get_joint_pos(self, person: Person, joint_index: int):
         """Safely extract a joint position (QVector3D) from a skeleton."""
@@ -32,7 +32,7 @@ class ArmSpreadDetector:
             self._prev_spread.clear()
             return events
 
-        now = time.time()
+        #now = time.time()
 
         for p in frame.people:
             pid = getattr(p, 'id', id(p))
@@ -56,15 +56,16 @@ class ArmSpreadDetector:
             # 2️⃣ Wrists far from body center (>600mm from chest center)
             dist_left = abs(lw.x - chest.x)
             dist_right = abs(rw.x - chest.x)
-            cond_distance = dist_left > 600 and dist_right > 600
+            cond_distance = dist_left > 500 and dist_right > 500
 
             is_spread = cond_height and cond_distance
             prev = self._prev_spread.get(pid, False)
 
             # Trigger only if cooldown passed
-            last_time = self._last_trigger.get(pid, 0)
-            if is_spread and (now - last_time) >= self._cooldown:
-                ts = getattr(frame, 'timestamp', now)
+            #last_time = self._last_trigger.get(pid, 0)
+            #if is_spread and (now - last_time) >= self._cooldown:
+            if is_spread and not prev:
+                ts = getattr(frame, 'timestamp', time.time())
                 dt = datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
                 midpoint = QVector3D(
                     (lw.x + rw.x) / 2, (lw.y + rw.y) / 2, (lw.z + rw.z) / 2
@@ -76,7 +77,7 @@ class ArmSpreadDetector:
                     "people": pid,
                     "pos": (int(midpoint.x()), int(midpoint.y()), int(midpoint.z()))
                 })
-                self._last_trigger[pid] = now
+                #self._last_trigger[pid] = now
 
             # Draw a cyan visual marker when active
             if is_spread and gl_context:

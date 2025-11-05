@@ -98,7 +98,7 @@ class HugDetector:
         current_hugs = set()
 
         # Iterate pairs
-        for a, b in intertools.combinations(people_map.keys(), 2):
+        for a, b in itertools.combinations(people_map.keys(), 2):
             A = people_map[a]
             B = people_map[b]
 
@@ -162,47 +162,38 @@ class HugDetector:
                     except Exception as e:
                         print(f"[OpenGL error while drawing confirmed hug] {e}")
 
-            else:
-                # Not a mutual hug; continue. We still draw debug visuals below.
-                pass
-
             # Draw debug visuals for this pair (pelvis -> pelvis line, hug centers):
             if gl_context:
                 try:
-                    # magenta line between pelvises
                     pa = A["pelvis"]
                     pb = B["pelvis"]
-                    if pa is not None and pb is not None:
+                    """ if pa is not None and pb is not None:
                         glBegin(GL_LINES)
                         glColor4f(1.0, 0.2, 0.8, 0.8)  # magenta line
                         glVertex3f(pa.x(), pa.y(), pa.z())
                         glVertex3f(pb.x(), pb.y(), pb.z())
-                        glEnd()
+                        glEnd() """
 
-                    # cyan small spheres at each hug center (if computed)
-                    try:
-                        # hug_center_A and hug_center_B exist if hands and pelvis exist
-                        if A["left"] is not None and A["right"] is not None and A["pelvis"] is not None:
-                            hA = hug_center_A
-                            glPushMatrix()
-                            glTranslatef(hA.x(), hA.y(), hA.z())
-                            glColor4f(0.2, 0.8, 0.9, 0.9)  # cyan
-                            quad = gluNewQuadric()
-                            gluSphere(quad, 35.0, 12, 12)
-                            gluDeleteQuadric(quad)
-                            glPopMatrix()
-                        if B["left"] is not None and B["right"] is not None and B["pelvis"] is not None:
-                            hB = hug_center_B
-                            glPushMatrix()
-                            glTranslatef(hB.x(), hB.y(), hB.z())
-                            glColor4f(0.2, 0.8, 0.9, 0.9)  # cyan
-                            quad = gluNewQuadric()
-                            gluSphere(quad, 35.0, 12, 12)
-                            gluDeleteQuadric(quad)
-                            glPopMatrix()
-                    except NameError:
-                        # hug_center variables may not exist if hands/pelvis missing — ignore
-                        pass
+                    # small cyan spheres at hug centers (if available)
+                    if A["left"] is not None and A["right"] is not None and A["pelvis"] is not None:
+                        hA = hug_center_A
+                        glPushMatrix()
+                        glTranslatef(hA.x(), hA.y(), hA.z())
+                        glColor4f(0.2, 0.8, 0.9, 0.9)  # cyan
+                        quad = gluNewQuadric()
+                        gluSphere(quad, 35.0, 12, 12)
+                        gluDeleteQuadric(quad)
+                        glPopMatrix()
+
+                    if B["left"] is not None and B["right"] is not None and B["pelvis"] is not None:
+                        hB = hug_center_B
+                        glPushMatrix()
+                        glTranslatef(hB.x(), hB.y(), hB.z())
+                        glColor4f(0.2, 0.8, 0.9, 0.9)  # cyan
+                        quad = gluNewQuadric()
+                        gluSphere(quad, 35.0, 12, 12)
+                        gluDeleteQuadric(quad)
+                        glPopMatrix()
 
                 except Exception as e:
                     print(f"[OpenGL error while drawing debug hug visuals] {e}")
