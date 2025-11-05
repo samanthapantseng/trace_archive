@@ -48,8 +48,19 @@ class OSCSampler:
         self.pyo_server = pyo_server
         self.gain_value = gain
         
-        # Sample mapping: OSC name -> sample filename (without extension)
-        self.sample_mapping = sample_mapping or {}
+        # Default sample mapping: OSC name -> sample filename (without extension)
+        default_mapping = {
+            'HEAD_BUMP': 'piano',
+            'ARM_STRETCH': 'bass',
+            'ARM_SPREAD': 'wood',
+            'HANDSHAKE': 'metal',
+            'HIGH_FIVE': 'drum',
+            'HUG': 'underwater',
+            'TITANIC': 'titanic'
+        }
+        
+        # Use provided mapping, or default if None
+        self.sample_mapping = sample_mapping if sample_mapping is not None else default_mapping
         
         # Dictionary to store loaded samples {filename: SfPlayer}
         self.samples = {}
