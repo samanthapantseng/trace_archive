@@ -39,16 +39,6 @@ s.printDevices()
 
 Update `AUDIO_DEVICE` in `bodysynth_modular.py` to match your output device.
 
-### Sample Files
-Place audio samples in the `samples/` directory:
-- `samples/piano.wav` - Piano sound (HEAD_BUMP gesture)
-- `samples/bass.wav` - Bass sound (ARM_STRETCH gesture)
-- `samples/wood.wav` - Wood sound (ARM_SPREAD gesture)
-- `samples/water.wav` - Water sound (HANDSHAKE gesture)
-- `samples/glass.wav` - Glass sound (HIGH_FIVE gesture)
-
-These mappings can be configured in `bodysynth_sampler_osc.py`
-
 ## Running the System
 
 ### Basic Usage
@@ -72,12 +62,20 @@ Available flags:
 - `--port` - Set the port, default 12345
 
 
-- **Prompt**: Text prompt for lyric generation
-- **Play Interval**: Seconds between phrase playback
-- **Auto-tune**: Pitch correction amount (0-100%)
-- **Reverb**: Reverb wetness (0-100%)
-- **Transpose**: Pitch shift in semitones (-12 to +12)
-- **Gain**: Overall singer volume (0-100%)
+### OSC Sampler
+
+The OSC sampler receives gesture data from the gesture part over OSC on port 8000.
+
+Whenerver a message on a specific topic arrives it playse the corresponding sample from the `samples/` folder:
+
+Current config
+- HEAD_BUMP: `samples/piano.wav`
+- ARM_STRETCH: `samples/bass.wav`
+- ARM_SPREAD: `samples/wood.wav`
+- HANDSHAKE: `samples/water.wav`
+- HIGH_FIVE: `samples/glass.wav`
+
+These mappings can be configured in `bodysynth_sampler_osc.py`
 
 
 ## Keyboard Shortcuts
