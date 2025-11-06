@@ -34,8 +34,6 @@ from bodysynth_gui import SynthMonitor
 # All use the same class name "LLMSinger" and same interface, so you can switch by uncommenting the desired line:
 from bodysynth_llm_singer import LLMSinger              # Local: Ollama + Piper (pre-generated, male voice, FREE)
 #from bodysynth_llm_singer_bark import LLMSinger         # Local: Ollama + Bark (pre-generated, expressive AI voices, FREE, SLOW first run)
-#from bodysynth_llm_singer_replicate import LLMSinger   # Cloud: Replicate API (set token in file, costs $$$)
-#from bodysynth_llm_singer_hf import LLMSinger          # Cloud: HuggingFace Inference API (set token in file, FREE but unreliable)
 
 
 
@@ -479,11 +477,8 @@ def main():
         pyo_server = s
         print(f"[INFO] Pyo audio server started on output device {AUDIO_DEVICE} at {actual_sample_rate} Hz")
     
-    # Setup GUI first if enabled (before creating audio objects)
-    monitor = None
-    timer = None
-    
     # Initialize components in main thread (critical for pyo)
+    monitor = None
     drum_sequencer = None
     wavetable_synth = None
     llm_singer = None
@@ -549,8 +544,6 @@ def main():
     client_thread.start()
     print("[INFO] Client thread started")
     
-    # Setup GUI monitor if enabled
-    
     if gui_enabled:
         app = QApplication.instance()
         if app is None:
@@ -598,9 +591,10 @@ def main():
         
         # Track loop start time and length for GUI
         gui_loop_start_time = time.time()
-        current_loop_length = [LOOP_LENGTH]  # Use list to make it mutable in closure
+        current_loop_length = LOOP_LENGTH
         
         def update_gui():
+            nonlocal current_loop_length
             with data_lock:
                 monitor.update_signal.emit(dict(synth_voice_data))
             
@@ -610,7 +604,7 @@ def main():
             else:
                 elapsed = time.time() - gui_loop_start_time
             
-            loop_position = (elapsed % current_loop_length[0]) / current_loop_length[0]
+            loop_position = (elapsed % current_loop_length) / current_loop_length
             monitor.head_widget.update_loop_position(loop_position)
             
             # Check for LLM audio to play (main thread context)
@@ -618,14 +612,12 @@ def main():
                 llm_singer.check_audio_queue()
         
         def on_loop_length_changed(new_length):
-            """Handle loop length changes from GUI"""
-            current_loop_length[0] = new_length
+            nonlocal current_loop_length
+            current_loop_length = new_length
             if drum_enabled and drum_sequencer:
                 drum_sequencer.loop_length = new_length
-                # Reset loop timing
                 drum_sequencer.loop_start_time = time.time()
                 drum_sequencer.triggered_this_loop.clear()
-                print(f"[INFO] Loop length changed to {new_length:.1f}s")
         
         def on_scale_changed(scale_name):
             """Handle scale changes from GUI"""

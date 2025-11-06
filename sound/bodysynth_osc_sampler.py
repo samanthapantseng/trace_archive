@@ -14,6 +14,18 @@ from pythonosc import osc_server
 import threading
 
 
+OSC_PORT = 8000
+SAMPLE_MAPPING = {
+            'HEAD_BUMP': 'piano',
+            'ARM_STRETCH': 'bass',
+            'ARM_SPREAD': 'wood',
+            'HANDSHAKE': 'metal',
+            'HIGH_FIVE': 'drum',
+            'HUG': 'underwater',
+            'TITANIC': 'titanic'
+        }
+
+
 class OSCSampler:
     """
     OSC-controlled sampler that plays audio files from a samples directory.
@@ -24,7 +36,7 @@ class OSCSampler:
     When received, it plays the corresponding audio file from the samples folder.
     """
     
-    def __init__(self, samples_dir=None, osc_ip="0.0.0.0", osc_port=8000, pyo_server=None, gain=1.0, sample_mapping=None):
+    def __init__(self, samples_dir=None, osc_ip="0.0.0.0", osc_port=OSC_PORT, pyo_server=None, gain=1.0, sample_mapping=None):
         """
         Initialize the OSC sampler.
         
@@ -48,19 +60,9 @@ class OSCSampler:
         self.pyo_server = pyo_server
         self.gain_value = gain
         
-        # Default sample mapping: OSC name -> sample filename (without extension)
-        default_mapping = {
-            'HEAD_BUMP': 'piano',
-            'ARM_STRETCH': 'bass',
-            'ARM_SPREAD': 'wood',
-            'HANDSHAKE': 'metal',
-            'HIGH_FIVE': 'drum',
-            'HUG': 'underwater',
-            'TITANIC': 'titanic'
-        }
         
         # Use provided mapping, or default if None
-        self.sample_mapping = sample_mapping if sample_mapping is not None else default_mapping
+        self.sample_mapping = sample_mapping if sample_mapping is not None else SAMPLE_MAPPING
         
         # Dictionary to store loaded samples {filename: SfPlayer}
         self.samples = {}

@@ -33,7 +33,7 @@ DEFAULT_TRANSPOSE = 0  # Octaves to transpose (-4 to 0)
 SAMPLE_RATE = 44100
 
 # Pre-generation settings
-NUM_PREGENERATED_PHRASES = 10  # How many phrases to pre-generate
+NUM_PREGENERATED_PHRASES = 1  # How many phrases to pre-generate PER people count (0-5)
 PREGENERATED_CACHE_DIR = "llm_singer_cache"  # Directory to store pre-generated audio
 
 # Musical scales (semitones from root)
@@ -87,8 +87,8 @@ class LLMSinger:
         self.piper_length_scale = 1.3  # 1.0 = normal speed, >1.0 = slower, <1.0 = faster
         
         # Pre-generated audio cache
-        self.pregenerated_phrases = []  # List of (text, audio_data) tuples
-        self.current_phrase_index = 0
+        self.pregenerated_phrases = {}  # Dict of {people_count: [(text, audio_data), ...]}
+        self.phrase_indices = {}  # Track which phrase index to play next per people count
         self.cache_dir = PREGENERATED_CACHE_DIR
         os.makedirs(self.cache_dir, exist_ok=True)
         
@@ -103,12 +103,7 @@ class LLMSinger:
         self.root_freq = 440.0
         self.current_note_index = 0  # Which note in the scale we're currently on
         
-        # Loop tracking for root frequency changes
-        self.last_loop_count = 0
-        self.root_change_interval = 4  # Change root every 4 loops
-        # Possible root frequencies (C, D, E, F, G, A, Bb)
-        self.root_frequencies = [261.63, 293.66, 329.63, 349.23, 392.00, 440.00, 466.16]
-        self.current_root_index = 5  # Start with A (440 Hz)
+
         
         # Melody generation
         self.current_melody = []  # List of note indices for the current phrase
@@ -196,68 +191,44 @@ class LLMSinger:
             self.pregeneration_complete.set()
     
     def _pregenerate_phrases(self):
-        """Pre-generate multiple phrases and audio files on startup"""
-        print(f"[LLMSinger] Pre-generating {NUM_PREGENERATED_PHRASES} phrases...")
+        """Pre-generate phrases for different people counts (0-5+)"""
+        print(f"[LLMSinger] Pre-generating {NUM_PREGENERATED_PHRASES} phrase(s) per people count...")
         
-        # Different frame scenarios to generate variety
-        scenarios = [
-            "empty space with no movement",
-            "a lone figure moving through space",
-            "2 figures dancing together",
-            "3 figures dancing together",
-            "4 figures dancing together",
-            "5 figures dancing together",
-            "multiple figures in coordinated motion",
-            "figures moving in different directions",
-            "a solitary dancer in the center",
-            "dancers forming geometric patterns"
-        ]
+        # Store phrases by people count: {0: [(text, audio)], 1: [(text, audio)], ...}
+        self.pregenerated_phrases = {}
         
-        for i in range(NUM_PREGENERATED_PHRASES):
-            try:
-                # Pick a scenario (cycle through them)
-                scenario = scenarios[i % len(scenarios)]
-                
-                # Generate LLM response
-                prompt = f"{self.base_prompt}\n\nScene: {scenario}\n\nDescribe in ONE SHORT SENTENCE (maximum 10 words):"
-                response, error = self.llm_client.generate(prompt, temperature=0.9, max_tokens=30)
-                
-                if error:
-                    print(f"[LLMSinger] Pre-gen error #{i}: {error}")
-                    continue
-                
-                text = response.strip().replace('\n', ' ')
-                print(f"[LLMSinger] Pre-generated #{i}: {text}")
-                
-                # Generate audio
-                audio_data = self._text_to_speech(text)
-                
-                if audio_data is not None:
-                    self.pregenerated_phrases.append((text, audio_data))
-                    print(f"[LLMSinger] Cached phrase #{i} ({len(audio_data)} samples)")
-                else:
-                    print(f"[LLMSinger] Failed to generate audio for phrase #{i}")
+        # Scenarios for each people count
+        scenarios = {
+            0: "empty space with no movement",
+            1: "a lone figure moving through space",
+            2: "2 figures dancing together",
+            3: "3 figures dancing in harmony",
+            4: "4 figures in coordinated motion",
+            5: "5 or more figures creating patterns"
+        }
+        
+        for people_count, scenario in scenarios.items():
+            self.pregenerated_phrases[people_count] = []
+            
+            for phrase_idx in range(NUM_PREGENERATED_PHRASES):
+                try:
+                    prompt = f"{self.base_prompt}\n\nScene: {scenario}\n\nDescribe in ONE SHORT SENTENCE (maximum 10 words):"
+                    response, error = self.llm_client.generate(prompt, temperature=0.9, max_tokens=30)
                     
-            except Exception as e:
-                print(f"[LLMSinger] Error pre-generating phrase #{i}: {e}")
+                    if error:
+                        continue
+                    
+                    text = response.strip().replace('\n', ' ')
+                    print(f"[LLMSinger] {people_count}p #{phrase_idx}: {text}")
+                    
+                    audio_data = self._text_to_speech(text)
+                    if audio_data is not None:
+                        self.pregenerated_phrases[people_count].append((text, audio_data))
+                except Exception as e:
+                    print(f"[LLMSinger] Error {people_count}p #{phrase_idx}: {e}")
         
-        print(f"[LLMSinger] Pre-generation complete! {len(self.pregenerated_phrases)} phrases ready")
-    
-    def _init_llm(self):
-        """Initialize LLM connection in background (deprecated - use _init_llm_and_pregenerate)"""
-        print("[LLMSinger] Connecting to Ollama...")
-        if self.on_lyrics_callback:
-            self.on_lyrics_callback("Connecting to Ollama...")
-        
-        if self.llm_client.connect():
-            self.llm_ready = True
-            print("[LLMSinger] LLM ready")
-            if self.on_lyrics_callback:
-                self.on_lyrics_callback("LLM ready - waiting for first frame...")
-        else:
-            print("[LLMSinger] LLM connection failed")
-            if self.on_lyrics_callback:
-                self.on_lyrics_callback("⚠️ LLM connection failed - check Ollama")
+        total_phrases = sum(len(phrases) for phrases in self.pregenerated_phrases.values())
+        print(f"[LLMSinger] Pre-generation complete! {total_phrases} total phrases ready")
     
     def start(self):
         """Start the generation loop"""
@@ -265,8 +236,6 @@ class LLMSinger:
             return
         
         self.running = True
-        self.generation_thread = threading.Thread(target=self._generation_loop, daemon=True)
-        self.generation_thread.start()
         print("[LLMSinger] Started")
         print("[LLMSinger] Waiting for pre-generation to complete...")
         
@@ -278,7 +247,7 @@ class LLMSinger:
     
     def is_ready(self):
         """Check if the LLM Singer is ready with pre-generated phrases"""
-        return self.pregeneration_complete.is_set() and len(self.pregenerated_phrases) > 0
+        return self.pregeneration_complete.is_set() and bool(self.pregenerated_phrases)
     
     def check_audio_queue(self):
         """Check for audio in the queue and play it. Must be called from main thread."""
@@ -296,190 +265,127 @@ class LLMSinger:
         if self.generation_thread and self.generation_thread.is_alive():
             self.generation_thread.join(timeout=2.0)
     
-    def _generation_loop(self):
-        """Background loop that triggers generation at intervals"""
-        while self.running:
-            current_time = time.time()
-            
-            # Check if it's time to generate
-            if current_time - self.last_generation_time >= self.generation_interval:
-                if self.llm_ready and not self.is_playing:
-                    self.last_generation_time = current_time
-                    # Trigger generation (will be called with frame data from main thread)
-                    print(f"[LLMSinger] Generation cycle triggered")
-            
-            time.sleep(0.5)
     
-    def should_generate(self):
-        """Check if it's time to generate new content"""
-        if not self.llm_ready:
-            return False
-        
+    def should_play(self):
+        """Check if it's time to play the next phrase"""
         # Wait for pre-generation to complete before allowing playback
         if not self.pregeneration_complete.is_set():
+            return False
+        
+        # Need at least one phrase to play
+        if not self.pregenerated_phrases:
             return False
         
         if self.is_playing:
             return False
         
-        if self.is_generating:
-            return False
-        
         current_time = time.time()
         time_since_last = current_time - self.last_generation_time
-        should_gen = time_since_last >= self.generation_interval
+        should_play = time_since_last >= self.generation_interval
         
-        if should_gen:
-            print(f"[LLMSinger] Time to generate! ({time_since_last:.1f}s since last)")
+        if should_play:
+            print(f"[LLMSinger] Time to play next phrase! ({time_since_last:.1f}s since last)")
         
-        return should_gen
+        return should_play
     
     def process_frame(self, frame_data):
-        """Process a frame and potentially generate singing"""
-        if not self.should_generate():
+        """Process a frame and potentially play matching phrase"""
+        if not self.should_play():
             return
         
-        # Mark as generating and update timestamp immediately
-        self.is_generating = True
+        # Update timestamp immediately
         self.last_generation_time = time.time()
         
-        print(f"[LLMSinger] Processing frame for generation")
+        # Analyze frame to get people count
+        people_count = self._get_people_count(frame_data)
         
-        # Generate in background thread to avoid blocking
+        print(f"[LLMSinger] Processing frame for playback (people: {people_count})")
+        
+        # Play matching phrase in background thread to avoid blocking
         threading.Thread(
-            target=self._generate_and_sing,
-            args=(frame_data,),
+            target=self._play_matching_phrase,
+            args=(people_count,),
             daemon=True
         ).start()
     
-    def _generate_and_sing(self, frame_data):
-        """Play pre-generated phrase (runs in background thread)
-        
-        IMPORTANT: This runs in a separate thread to avoid blocking the audio thread.
-        Instead of generating on-the-fly, we use pre-generated phrases.
-        """
+    def _get_people_count(self, frame_data):
+        """Get number of people in frame"""
+        if not frame_data or 'people' not in frame_data:
+            return 0
+        return min(len(frame_data['people']), 5)  # Cap at 5 for matching
+    
+    def _play_matching_phrase(self, people_count):
+        """Play pre-generated phrase matching people count"""
         with self.lock:
             if self.is_playing:
-                self.is_generating = False
                 return
-            
             self.is_playing = True
         
         try:
-            # Check if we have pre-generated phrases
             if not self.pregenerated_phrases:
-                print(f"[LLMSinger] No pre-generated phrases available")
-                self.is_playing = False
-                self.is_generating = False
                 return
             
-            # Get next pre-generated phrase
-            text, audio_data = self.pregenerated_phrases[self.current_phrase_index]
-            self.current_phrase_index = (self.current_phrase_index + 1) % len(self.pregenerated_phrases)
+            # Get phrase list matching people count
+            if people_count not in self.pregenerated_phrases:
+                available = sorted(self.pregenerated_phrases.keys())
+                people_count = min(available, key=lambda x: abs(x - people_count))
             
-            print(f"[LLMSinger] Singing pre-generated phrase: {text}")
+            phrase_list = self.pregenerated_phrases[people_count]
+            if not phrase_list:
+                return
             
-            # Store and callback with lyrics
+            # Get current index for this people count
+            if people_count not in self.phrase_indices:
+                self.phrase_indices[people_count] = 0
+            
+            idx = self.phrase_indices[people_count]
+            text, audio_data = phrase_list[idx]
+            self.phrase_indices[people_count] = (idx + 1) % len(phrase_list)
+            
+            print(f"[LLMSinger] {people_count}p: {text}")
+            
             self.last_lyrics = text
             if self.on_lyrics_callback:
                 self.on_lyrics_callback(text)
             
-            # Queue audio for playback in main thread
-            print(f"[LLMSinger] Queueing {len(audio_data)} audio samples")
             self.audio_playback_queue.put(audio_data)
-            print(f"[LLMSinger] Audio queued for playback")
             
         except Exception as e:
             print(f"[LLMSinger] Error: {e}")
         finally:
             self.is_playing = False
-            self.is_generating = False
-    
-    def _analyze_frame(self, frame_data):
-        """Analyze frame data and create description"""
-        if not frame_data or 'people' not in frame_data:
-            return "empty space with no movement"
-        
-        num_people = len(frame_data['people'])
-        
-        if num_people == 0:
-            return "empty space with no movement"
-        elif num_people == 1:
-            return "a lone figure moving through space"
-        else:
-            return f"{num_people} figures dancing together"
     
     def _text_to_speech(self, text):
-        """Convert text to speech using Piper and return audio data"""
-        try:
-            print(f"[LLMSinger] Converting to speech: '{text}'")
-            # Save to project folder for debugging
-            import os
-            
-            temp_path = "llm_singer_debug.wav"
-            
-            print(f"[LLMSinger] TTS temp file: {temp_path}")
-            
-            # Generate speech using Piper
-            # Pass text via stdin to piper
-            result = subprocess.run(
-                ['piper', '--model', self.piper_model, '--length_scale', str(self.piper_length_scale), '--output_file', temp_path],
-                input=text,
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode != 0:
-                print(f"[LLMSinger] Piper error: {result.stderr}")
-                return None
-            
-            print(f"[LLMSinger] TTS generation complete")
-            
-            # Check if file exists and has content
-            if not os.path.exists(temp_path):
-                print(f"[LLMSinger] Error: TTS file not created")
-                return None
-            
-            file_size = os.path.getsize(temp_path)
-            print(f"[LLMSinger] TTS file size: {file_size} bytes")
-            
-            if file_size == 0:
-                print(f"[LLMSinger] Error: TTS file is empty")
-                return None
-            
-            # Read the audio file
-            with wave.open(temp_path, 'rb') as wf:
-                sample_rate = wf.getframerate()
-                n_channels = wf.getnchannels()
-                n_frames = wf.getnframes()
-                audio_bytes = wf.readframes(n_frames)
-            
-            # Convert to numpy array
-            audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-            audio_data = audio_data / 32768.0  # Normalize to -1.0 to 1.0
-            
-            # Handle stereo if needed
-            if n_channels == 2:
-                audio_data = audio_data[::2]  # Take left channel
-            
-            # Resample if needed
-            if sample_rate != SAMPLE_RATE:
-                audio_data = self._resample(audio_data, sample_rate, SAMPLE_RATE)
-            
-            # Don't delete temp file for debugging
-            print(f"[LLMSinger] TTS audio saved to: {temp_path}")
-            # try:
-            #     os.unlink(temp_path)
-            # except:
-            #     pass
-            
-            return audio_data
-            
-        except Exception as e:
-            import traceback
-            print(f"[LLMSinger] TTS error: {e}")
-            traceback.print_exc()
+        """Convert text to speech using Piper"""
+        temp_path = "llm_singer_debug.wav"
+        result = subprocess.run(
+            ['piper', '--model', self.piper_model, '--length_scale', str(self.piper_length_scale), '--output_file', temp_path],
+            input=text,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
             return None
+        
+        # Read the audio file
+        with wave.open(temp_path, 'rb') as wf:
+            sample_rate = wf.getframerate()
+            n_channels = wf.getnchannels()
+            audio_bytes = wf.readframes(wf.getnframes())
+        
+        # Convert to numpy array and normalize
+        audio_data = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+        
+        # Handle stereo
+        if n_channels == 2:
+            audio_data = audio_data[::2]
+        
+        # Resample if needed
+        if sample_rate != SAMPLE_RATE:
+            audio_data = self._resample(audio_data, sample_rate, SAMPLE_RATE)
+        
+        return audio_data
     
     def _resample(self, audio, orig_sr, target_sr):
         """Simple resampling using linear interpolation"""
@@ -556,18 +462,19 @@ class LLMSinger:
     
     def _regenerate_phrases(self):
         """Regenerate all phrases with the new prompt"""
-        # Clear old phrases
-        old_count = len(self.pregenerated_phrases)
+        # Clear old phrases and indices
+        old_count = sum(len(phrases) for phrases in self.pregenerated_phrases.values())
         self.pregenerated_phrases.clear()
-        self.current_phrase_index = 0
+        self.phrase_indices.clear()
         
         print(f"[LLMSinger] Cleared {old_count} old phrases, generating new ones...")
         
-        # Pre-generate new phrases
+        # Pre-generate new phrases (will create dict by people_count)
         self._pregenerate_phrases()
         
+        total_phrases = sum(len(phrases) for phrases in self.pregenerated_phrases.values())
         if self.on_lyrics_callback:
-            self.on_lyrics_callback(f"Ready! {len(self.pregenerated_phrases)} new phrases cached")
+            self.on_lyrics_callback(f"Ready! {total_phrases} new phrases cached")
     
     def set_generation_interval(self, interval):
         """Update generation interval in seconds"""
@@ -685,73 +592,3 @@ class LLMSinger:
         shift = target_freq - self.root_freq
         
         return float(shift)
-    
-    def cycle_scale_note(self):
-        """Move to the next note in the scale"""
-        scale = SCALES[self.current_scale]
-        self.current_note_index = (self.current_note_index + 1) % len(scale)
-        
-        # Update the pitch shift
-        shift = self._calculate_scale_shift(self.current_note_index)
-        if hasattr(self, 'pitch_shift'):
-            self.pitch_shift.shift = shift
-        
-        semitones = scale[self.current_note_index]
-        print(f"[LLMSinger] Note: {self.current_note_index} (semitone: {semitones}, shift: {shift:.1f} Hz)")
-        
-        return shift
-    
-    def set_scale_note(self, note_index):
-        """Set a specific note in the scale
-        
-        Args:
-            note_index: Index of the note in the scale (0-based)
-        """
-        scale = SCALES[self.current_scale]
-        self.current_note_index = note_index % len(scale)
-        
-        # Update the pitch shift
-        shift = self._calculate_scale_shift(self.current_note_index)
-        if hasattr(self, 'pitch_shift'):
-            self.pitch_shift.shift = shift
-        
-        semitones = scale[self.current_note_index]
-        print(f"[LLMSinger] Note: {self.current_note_index} (semitone: {semitones}, shift: {shift:.1f} Hz)")
-    
-    def update_loop_count(self, loop_count):
-        """Update with the current drum loop count and change root frequency every 4 loops
-        
-        Args:
-            loop_count: Current loop count from drum sequencer
-        """
-        # Check if we've crossed a 4-loop boundary
-        if loop_count > 0 and loop_count != self.last_loop_count:
-            if loop_count % self.root_change_interval == 0:
-                # Change to next root frequency
-                self.current_root_index = (self.current_root_index + 1) % len(self.root_frequencies)
-                new_root = self.root_frequencies[self.current_root_index]
-                
-                # Update root frequency
-                old_root = self.root_freq
-                self.root_freq = new_root
-                
-                # Update the flatten shift to target the new root
-                self.flatten_shift = self.root_freq - self.speech_fundamental
-                if hasattr(self, 'flattener'):
-                    self.flattener.shift = self.flatten_shift
-                
-                # Update transpose shift (based on new root)
-                transpose_shift = self.transpose * self.root_freq
-                if hasattr(self, 'transpose_shifter'):
-                    self.transpose_shifter.shift = transpose_shift
-                
-                # Recalculate current pitch shift for melody
-                if len(self.current_melody) > 0:
-                    shift = self._calculate_scale_shift(self.current_note_index)
-                    if hasattr(self, 'pitch_shift'):
-                        self.pitch_shift.shift = shift
-                
-                note_names = ['C', 'D', 'E', 'F', 'G', 'A', 'Bb']
-                print(f"[LLMSinger] *** ROOT CHANGE at loop {loop_count}: {note_names[self.current_root_index]} ({new_root:.1f} Hz) ***")
-            
-            self.last_loop_count = loop_count

@@ -8,9 +8,6 @@ import time
 import threading
 from pyo import *
 
-from senseSpaceLib.senseSpace.protocol import Frame
-from senseSpaceLib.senseSpace.enums import UniversalJoint
-
 # --- Configuration ---
 SAMPLE_RATE = 44100
 CHANNELS = 2
@@ -523,7 +520,7 @@ class DrumSequencer:
                     if sample_idx in self.sample_voices:
                         self.sample_voices[sample_idx].trigger_sample(volume * self.master_gain)
                         self.triggered_this_loop.add(person_id)
-        
+
         self.last_loop_position = current_loop_position
         
         return {

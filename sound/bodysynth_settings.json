@@ -17,7 +17,7 @@
   "llm_gain": 1.0,
   "llm_prompt": "You are an alchemist trying to find a dance to create a bad spell on a kingdom. Describe what you see in poetic, mystical terms in one short sentence.",
   "llm_interval": 10.0,
-  "llm_autotune": 0.5,
-  "llm_reverb": 0.7,
-  "llm_transpose": 0.0
+  "llm_autotune": 0.07,
+  "llm_reverb": 0.71,
+  "llm_transpose": -0.39
 }
