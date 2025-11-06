@@ -14,27 +14,25 @@ The bodysynth system combines multiple audio components:
 - **OSC Sampler**: Gesture-triggered audio sample playback
 - **GUI**: Real-time visualization and parameter control
 
-## Requirements
-
-### Python Dependencies
+#### Quick Install (Core Components)
 ```bash
-# Core audio
-pip install pyo
-
-# GUI
-pip install PyQt6
-
-# LLM Singer (optional)
-pip install transformers torch scipy
-pip install TTS  # For Bark model
+pip install -r requirements.txt
 ```
+
+
+#### senseSpaceLib
+The system requires `senseSpaceLib` from the parent repository. Install from the repository root:
+```bash
+cd /path/to/senseSpace/libs/senseSpaceLib
+pip install -e .
+```
+
 
 ### Audio Setup
 The system should be configured to use the default audio device (in my case 10) (line 18 in `bodysynth_modular.py`). To find your default audio device:
 ```python
 from pyo import *
-s = Server()
-s.printDevices()
+pa_get_devices_infos()
 ```
 
 Update `AUDIO_DEVICE` in `bodysynth_modular.py` to match your output device.
@@ -86,3 +84,56 @@ These mappings can be configured in `bodysynth_sampler_osc.py`
 
 Settings are automatically saved to `bodysynth_settings.json` when changed in the GUI.
 
+
+
+
+### External Dependencies
+
+#### For LLM Singer
+
+**Option 1: Piper TTS + Ollama** (`bodysynth_llm_singer.py`)
+- **Piper TTS**: Download and install from https://github.com/rhasspy/piper
+  - Requires `piper` binary in PATH
+  - Model: `en_US-danny-low` (downloads automatically on first run)
+- **Ollama**: Install and run with `llama3.2:1b` model
+  ```bash
+  # Install Ollama from https://ollama.ai
+  ollama pull llama3.2:1b
+  ollama run llama3.2:1b
+  ```
+
+**Option 2: Bark TTS + Ollama** (`bodysynth_llm_singer_bark.py`)
+- Install Bark and dependencies (see requirements.txt)
+- Ollama setup same as above
+- First run downloads Bark models automatically
+
+**Option 3: HuggingFace API** (`bodysynth_llm_singer_hf.py`)
+- Requires HuggingFace account and API token
+- Get free token from: https://huggingface.co/settings/tokens
+- No local models needed (uses cloud API)
+
+
+#### Manual Installation
+```bash
+# Core audio engine
+pip install pyo>=1.0.5
+
+# GUI framework
+pip install PyQt6>=6.6.0
+pip install pyqtgraph>=0.13.3
+
+# Scientific computing
+pip install numpy>=1.24.0
+
+# OSC communication (for gesture-triggered samples)
+pip install python-osc>=1.8.3
+
+# LLM Singer - Bark Version (optional, only needed for --llm flag)
+pip install git+https://github.com/suno-ai/bark.git
+pip install transformers>=4.35.0
+pip install torch>=2.1.0
+pip install scipy>=1.10.0
+
+# LLM Singer - HuggingFace API Version (alternative to Bark)
+pip install huggingface-hub>=0.19.0
+```
