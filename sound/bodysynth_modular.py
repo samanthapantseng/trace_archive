@@ -25,8 +25,8 @@ from senseSpaceLib.senseSpace.enums import UniversalJoint
 # Import bodysynth modules
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from bodysynth_drum_class import DrumSequencer, LOOP_LENGTH, NUM_LANES, TOP_LEFT, BOTTOM_RIGHT
-from bodysynth_wave_class import WavetableSynth
+from bodysynth_sequencer import DrumSequencer, LOOP_LENGTH, NUM_LANES, TOP_LEFT, BOTTOM_RIGHT
+from bodysynth_wave import WavetableSynth
 from bodysynth_osc_sampler import OSCSampler
 from bodysynth_gui import SynthMonitor
 
@@ -684,6 +684,11 @@ def main():
             if wave_enabled and wavetable_synth:
                 wavetable_synth.set_distortion(distortion)
         
+        def on_wave_smoothing_changed(smoothing):
+            """Handle wave smoothing changes from GUI"""
+            if wave_enabled and wavetable_synth:
+                wavetable_synth.set_smoothing(smoothing)
+        
         def on_wave_lfo_changed(lfo_amount):
             """Handle wave LFO changes from GUI"""
             if wave_enabled and wavetable_synth:
@@ -745,6 +750,7 @@ def main():
         monitor.drum_distortion_changed.connect(on_drum_distortion_changed)
         monitor.drum_compression_changed.connect(on_drum_compression_changed)
         monitor.wave_distortion_changed.connect(on_wave_distortion_changed)
+        monitor.wave_smoothing_changed.connect(on_wave_smoothing_changed)
         monitor.wave_lfo_changed.connect(on_wave_lfo_changed)
         monitor.wave_lfo_slowdown_changed.connect(on_wave_lfo_slowdown_changed)
         monitor.wave_min_reverb_changed.connect(on_wave_min_reverb_changed)
@@ -787,6 +793,7 @@ def main():
         on_drum_compression_changed(saved_settings.get("drum_compression", DEFAULT_SETTINGS["drum_compression"]))
         on_wave_gain_changed(saved_settings.get("wave_gain", DEFAULT_SETTINGS["wave_gain"]))
         on_wave_distortion_changed(saved_settings.get("wave_distortion", DEFAULT_SETTINGS["wave_distortion"]))
+        on_wave_smoothing_changed(saved_settings.get("wave_smoothing", DEFAULT_SETTINGS["wave_smoothing"]))
         on_wave_lfo_changed(saved_settings.get("wave_lfo_amount", DEFAULT_SETTINGS["wave_lfo_amount"]))
         on_wave_min_reverb_changed(saved_settings.get("wave_min_reverb", DEFAULT_SETTINGS["wave_min_reverb"]))
         on_wave_max_armlen_changed(saved_settings.get("wave_max_armlen", DEFAULT_SETTINGS["wave_max_armlen"]))

@@ -24,6 +24,7 @@ DEFAULT_SETTINGS = {
     # Wave parameters
     "wave_gain": 0.3,
     "wave_distortion": 0.0,
+    "wave_smoothing": 0.0,  # 0.0 = no smoothing (poly order 12), 1.0 = max smoothing (poly order 4)
     "wave_lfo_amount": 0.2,
     "wave_min_reverb": 0.2,
     "wave_max_armlen": 2400.0,

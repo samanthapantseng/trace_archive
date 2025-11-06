@@ -656,6 +656,7 @@ class SynthMonitor(QMainWindow):
     
     # Wave effect signals
     wave_distortion_changed = pyqtSignal(float)  # Signal for wave distortion changes
+    wave_smoothing_changed = pyqtSignal(float)  # Signal for wave smoothing changes
     wave_lfo_changed = pyqtSignal(float)  # Signal for wave LFO amount changes
     wave_lfo_slowdown_changed = pyqtSignal(float)  # Signal for wave LFO slowdown changes
     wave_min_reverb_changed = pyqtSignal(float)  # Signal for wave min reverb changes
@@ -811,6 +812,19 @@ class SynthMonitor(QMainWindow):
         wave_dist_h.addWidget(self.wave_distortion_slider, stretch=2)
         wave_dist_h.addWidget(self.wave_distortion_value_label)
         wave_effects_layout.addLayout(wave_dist_h)
+        
+        # Wave Smoothing (polynomial order)
+        wave_smooth_h = QHBoxLayout()
+        wave_smooth_h.addWidget(QLabel("Smoothing:"))
+        self.wave_smoothing_slider = QSlider(Qt.Orientation.Horizontal)
+        self.wave_smoothing_slider.setMinimum(0)
+        self.wave_smoothing_slider.setMaximum(100)
+        self.wave_smoothing_slider.setValue(0)  # 0.0 default (no smoothing, poly order 12)
+        self.wave_smoothing_value_label = QLabel("0.00")
+        self.wave_smoothing_slider.valueChanged.connect(self._on_wave_smoothing_changed)
+        wave_smooth_h.addWidget(self.wave_smoothing_slider, stretch=2)
+        wave_smooth_h.addWidget(self.wave_smoothing_value_label)
+        wave_effects_layout.addLayout(wave_smooth_h)
         
         # Wave LFO Amount
         wave_lfo_h = QHBoxLayout()
@@ -1164,6 +1178,13 @@ class SynthMonitor(QMainWindow):
         self.wave_distortion_changed.emit(amount)
         self.settings_changed.emit()
     
+    def _on_wave_smoothing_changed(self, value):
+        """Handle wave smoothing slider changes"""
+        amount = value / 100.0
+        self.wave_smoothing_value_label.setText(f"{amount:.2f}")
+        self.wave_smoothing_changed.emit(amount)
+        self.settings_changed.emit()
+    
     def _on_wave_lfo_changed(self, value):
         """Handle wave LFO slider changes"""
         amount = value / 100.0
@@ -1229,6 +1250,7 @@ class SynthMonitor(QMainWindow):
             "drum_compression": self.drum_compression_slider.value() / 100.0,
             "wave_gain": self.wave_gain_slider.value() / 100.0,
             "wave_distortion": self.wave_distortion_slider.value() / 100.0,
+            "wave_smoothing": self.wave_smoothing_slider.value() / 100.0,
             "wave_lfo_amount": self.wave_lfo_slider.value() / 100.0,
             "wave_lfo_slowdown": float(self.wave_lfo_slowdown_slider.value()),
             "wave_min_reverb": self.wave_min_reverb_slider.value() / 100.0,
@@ -1265,6 +1287,8 @@ class SynthMonitor(QMainWindow):
             self.wave_gain_slider.setValue(int(settings["wave_gain"] * 100))
         if "wave_distortion" in settings:
             self.wave_distortion_slider.setValue(int(settings["wave_distortion"] * 100))
+        if "wave_smoothing" in settings:
+            self.wave_smoothing_slider.setValue(int(settings["wave_smoothing"] * 100))
         if "wave_lfo_amount" in settings:
             self.wave_lfo_slider.setValue(int(settings["wave_lfo_amount"] * 100))
         if "wave_lfo_slowdown" in settings:
