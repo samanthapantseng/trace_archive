@@ -29,8 +29,8 @@ class HugDetector:
     PELVIS = 0
 
     def __init__(self, 
-                 arm_closure_threshold_mm: float = 300.0,
-                 embrace_radius_mm: float = 400.0):
+                 arm_closure_threshold_mm: float = 500.0,
+                 embrace_radius_mm: float = 300.0):
         # Parameters
         self._arm_closure_threshold_mm = arm_closure_threshold_mm
         self._embrace_radius_mm = embrace_radius_mm

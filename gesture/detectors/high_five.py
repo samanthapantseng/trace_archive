@@ -20,7 +20,7 @@ class HighFiveDetector:
 
     def __init__(self):
         self._prev_touching = set()  # set of pair keys currently touching
-        self._touch_threshold_mm = 200.0  # ~20cm between hands
+        self._touch_threshold_mm = 150.0  # ~15cm between hands
 
     def _get_joint_pos(self, person: Person, index: int):
         """Extract joint position as QVector3D"""

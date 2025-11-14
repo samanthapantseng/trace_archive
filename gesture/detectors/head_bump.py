@@ -15,7 +15,7 @@ class HeadBumpDetector:
 
     def __init__(self):
         self._prev_touching = set()  # set of pair keys currently touching
-        self._touch_threshold_mm = 250.0  # ~25cm between head centers
+        self._touch_threshold_mm = 120.0  # ~12cm between head centers
 
     def _get_head_pos(self, person: Person):
         skel = getattr(person, 'skeleton', None) 

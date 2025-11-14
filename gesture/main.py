@@ -20,12 +20,13 @@ from glob import glob
 
 # Import detectors 
 #from detectors.head_bump import HeadBumpDetector
-from detectors.high_five import HighFiveDetector
+#from detectors.high_five import HighFiveDetector
 from detectors.hug import HugDetector
-from detectors.arm_stretch import ArmStretchDetector
-from detectors.arm_spread import ArmSpreadDetector 
-from detectors.handshake import HandshakeDetector
+#from detectors.arm_stretch import ArmStretchDetector
+#from detectors.arm_spread import ArmSpreadDetector 
+#from detectors.handshake import HandshakeDetector
 #from detectors.titanic import TitanicDetector
+from detectors.trail import TrailDetector
 
 class MultiSender:
     def __init__(self, targets):
@@ -56,19 +57,20 @@ class CustomSkeletonWidget(SkeletonGLWidget):
 
         self.sender = MultiSender([
             # Change IP depending on computer being used
-            ("192.168.1.18", 8000), # Receiving for TD 
-            ("192.168.1.13", 8001), # Receiving for Sound
+            ("192.168.1.18", 8000), # Receiving for Sound 
+            ("192.168.1.13", 8001), # Receiving for TD
         ])
 
         # Load detectors
         self.detectors = [
             #HeadBumpDetector(),
-            HighFiveDetector(),
+            #HighFiveDetector(),
             HugDetector(),
-            ArmStretchDetector(),
-            ArmSpreadDetector(),
-            HandshakeDetector(),
-            #TitanicDetector()
+            #ArmStretchDetector(),
+            #ArmSpreadDetector(),
+            #HandshakeDetector(),
+            #TitanicDetector(),
+            TrailDetector()
         ]
 
         print(f"[INIT] Loaded {len(self.detectors)} detectors.")
