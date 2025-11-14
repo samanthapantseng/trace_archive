@@ -27,7 +27,7 @@ class TrailDetector:
         self._person_mapping = {}  # current_key -> stable_id
         self._next_stable_id = 0
         self._start_time = time.time()
-        self._duration_seconds = 60
+        self._duration_seconds = 20
         self._proximity_threshold = 500.0  # 500mm = 50cm for reappearance matching
         self._exported = False
         self._colors = self._generate_color_palette()
@@ -162,13 +162,13 @@ class TrailDetector:
         glEnable(GL_DEPTH_TEST)
     
     def _export_svg(self):
-        """Export hand trails to SVG file (A4 size, wall/front view)."""
+        """Export hand trails to SVG file (A5 size, wall/front view)."""
         if not self._trails or self._exported:
             return
         
-        # A4 size in mm (landscape for wall view)
-        a4_width_mm = 297
-        a4_height_mm = 210
+        # A5 size in mm (landscape for wall view)
+        page_width_mm = 210
+        page_height_mm = 148
         
         # Collect all points from both hands
         all_points = []
@@ -191,45 +191,75 @@ class TrailDetector:
         bbox_width = max_x - min_x
         bbox_height = max_y - min_y
         
+        print(f"[TRAIL DEBUG] BBox: width={bbox_width:.1f}mm, height={bbox_height:.1f}mm")
+        print(f"[TRAIL DEBUG] Range X: {min_x:.1f} to {max_x:.1f}")
+        print(f"[TRAIL DEBUG] Range Y: {min_y:.1f} to {max_y:.1f}")
+        
         if bbox_width == 0 or bbox_height == 0:
             print("[TRAIL] Bounding box too small to export")
             return
         
-        # Add 10% margin
-        margin = 0.1
-        bbox_width *= (1 + margin * 2)
-        bbox_height *= (1 + margin * 2)
-        min_x -= bbox_width * margin
-        min_y -= bbox_height * margin
+        # FIXED SCALE: Define maximum gesture size in real world (mm)
+        # This ensures all exports use the same scale for comparison
+        max_gesture_height_mm = 1500  
+        max_gesture_width_mm = 1500  
         
-        # Scale to fit A4 (keep aspect ratio)
-        scale_x = a4_width_mm / bbox_width
-        scale_y = a4_height_mm / bbox_height
-        scale = min(scale_x, scale_y)
+        # Calculate fixed scale based on fitting max gesture to page
+        # Use 90% of page to leave some margin
+        scale_for_max_height = (page_height_mm * 0.9) / max_gesture_height_mm
+        scale_for_max_width = (page_width_mm * 0.9) / max_gesture_width_mm
+        fixed_scale = min(scale_for_max_height, scale_for_max_width)
         
-        # Center on A4
-        scaled_width = bbox_width * scale
-        scaled_height = bbox_height * scale
-        offset_x = (a4_width_mm - scaled_width) / 2
-        offset_y = (a4_height_mm - scaled_height) / 2
+        print(f"[TRAIL DEBUG] Fixed scale: {fixed_scale:.6f} (max gesture: {max_gesture_width_mm}x{max_gesture_height_mm}mm)")
+        
+        # Calculate actual size after scaling with fixed scale
+        scaled_width = bbox_width * fixed_scale
+        scaled_height = bbox_height * fixed_scale
+        
+        print(f"[TRAIL DEBUG] Scaled size: {scaled_width:.1f}mm x {scaled_height:.1f}mm")
+        print(f"[TRAIL DEBUG] Original bbox: {bbox_width:.1f}mm x {bbox_height:.1f}mm")
+        
+        # Center on A5
+        offset_x = (page_width_mm - scaled_width) / 2
+        offset_y = (page_height_mm - scaled_height) / 2
+        
+        print(f"[TRAIL DEBUG] Offsets: x={offset_x:.1f}mm, y={offset_y:.1f}mm")
+        
+        # Calculate center point of the gesture for positioning
+        center_x = (min_x + max_x) / 2
+        center_y = (min_y + max_y) / 2
         
         def transform(x, y):
-            """Transform from world coords to SVG coords (flip Y for SVG)."""
-            svg_x = (x - min_x) * scale + offset_x
-            svg_y = a4_height_mm - ((y - min_y) * scale + offset_y)  # Flip Y
+            """Transform from world coords to SVG coords with fixed scale."""
+            # Apply fixed scale and center on page
+            svg_x = (x - center_x) * fixed_scale + page_width_mm / 2
+            svg_y = page_height_mm - ((y - center_y) * fixed_scale + page_height_mm / 2)  # Flip Y
             return svg_x, svg_y
         
         # Create SVG
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output_dir = os.path.join(os.path.dirname(__file__), '..', 'trails')
-        os.makedirs(output_dir, exist_ok=True)
-        output_file = os.path.join(output_dir, f'hand_trail_{timestamp}.svg')
         
-        dwg = svgwrite.Drawing(output_file, size=(f'{a4_width_mm}mm', f'{a4_height_mm}mm'))
+        # Create a folder for this export session
+        session_dir = os.path.join(output_dir, f'trail_{timestamp}')
+        os.makedirs(session_dir, exist_ok=True)
+        
+        # File for combined trail with all people
+        combined_file = os.path.join(session_dir, f'all_trails_{timestamp}.svg')
+        
+        # ===== COMBINED SVG WITH ALL TRAILS =====
+        dwg = svgwrite.Drawing(
+            combined_file, 
+            size=(f'{page_width_mm}mm', f'{page_height_mm}mm'),
+            viewBox=f'0 0 {page_width_mm} {page_height_mm}'
+        )
         
         # Add background
-        dwg.add(dwg.rect(insert=(0, 0), size=(f'{a4_width_mm}mm', f'{a4_height_mm}mm'), 
-                         fill='white'))
+        dwg.add(dwg.rect(
+            insert=(0, 0), 
+            size=(page_width_mm, page_height_mm), 
+            fill='white'
+        ))
         
         # Draw each person's trails
         for stable_id, trail_data in self._trails.items():
@@ -242,12 +272,14 @@ class TrailDetector:
             left_trail = trail_data['left']
             if len(left_trail) >= 2:
                 points = [transform(x, y) for x, y, _ in left_trail]
+                if stable_id == 0:
+                    print(f"[TRAIL DEBUG] First point: {points[0]}, Last point: {points[-1]}")
                 polyline = dwg.polyline(points, stroke=color_hex, fill='none', 
                                        stroke_width=2, stroke_linecap='round',
                                        stroke_dasharray='5,2')  # Dashed for left
                 dwg.add(polyline)
             
-            # Draw right hand trail (solid line)
+            # Draw right hand trail
             right_trail = trail_data['right']
             if len(right_trail) >= 2:
                 points = [transform(x, y) for x, y, _ in right_trail]
@@ -255,20 +287,116 @@ class TrailDetector:
                                        stroke_width=2, stroke_linecap='round')
                 dwg.add(polyline)
         
-        # Add legend
+        # Add legend with color coding
         legend_y = 10
-        dwg.add(dwg.text("Hand Trails", insert=(5, legend_y), 
+        dwg.add(dwg.text("Hand Trails - All People", insert=(5, legend_y), 
                         font_size='10px', fill='black', font_weight='bold'))
+        legend_y += 12
         dwg.add(dwg.text("Dashed = Left Hand | Solid = Right Hand", 
-                        insert=(5, legend_y + 12), font_size='8px', fill='gray'))
+                        insert=(5, legend_y), font_size='8px', fill='gray'))
+        
+        # Add color legend for each person
+        legend_y += 15
+        for stable_id, trail_data in self._trails.items():
+            color = trail_data['color']
+            color_hex = '#{:02x}{:02x}{:02x}'.format(
+                int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)
+            )
+            # Draw color square
+            dwg.add(dwg.rect(insert=(5, legend_y - 6), size=(8, 8), fill=color_hex))
+            # Draw person label
+            dwg.add(dwg.text(f"Person {stable_id}", insert=(18, legend_y), 
+                            font_size='8px', fill='black'))
+            legend_y += 12
         
         # Add metadata
         info_text = f"Duration: {self._duration_seconds}s | People: {len(self._trails)} | {timestamp}"
-        dwg.add(dwg.text(info_text, insert=(5, a4_height_mm - 5), 
+        dwg.add(dwg.text(info_text, insert=(5, page_height_mm - 5), 
                         font_size='8px', fill='gray'))
         
         dwg.save()
-        print(f"[TRAIL] Exported SVG to {output_file}")
+        print(f"[TRAIL] Exported combined SVG to {combined_file}")
+        
+        # ===== INDIVIDUAL SVG FOR EACH PERSON'S EACH HAND =====
+        for stable_id, trail_data in self._trails.items():
+            color = trail_data['color']
+            color_hex = '#{:02x}{:02x}{:02x}'.format(
+                int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)
+            )
+            
+            # LEFT HAND SVG
+            left_trail = trail_data['left']
+            if len(left_trail) >= 2:
+                left_file = os.path.join(session_dir, f'person_{stable_id}_left_{timestamp}.svg')
+                
+                dwg_left = svgwrite.Drawing(
+                    left_file, 
+                    size=(f'{page_width_mm}mm', f'{page_height_mm}mm'),
+                    viewBox=f'0 0 {page_width_mm} {page_height_mm}'
+                )
+                
+                # Add background
+                dwg_left.add(dwg_left.rect(
+                    insert=(0, 0), 
+                    size=(page_width_mm, page_height_mm), 
+                    fill='white'
+                ))
+                
+                # Draw left hand trail
+                points = [transform(x, y) for x, y, _ in left_trail]
+                polyline = dwg_left.polyline(points, stroke=color_hex, fill='none', 
+                                             stroke_width=2, stroke_linecap='round')
+                dwg_left.add(polyline)
+                
+                # Add title
+                dwg_left.add(dwg_left.text(f"Person {stable_id} - Left Hand", insert=(5, 10), 
+                                          font_size='10px', fill='black', font_weight='bold'))
+                
+                # Add metadata
+                info_text = f"Duration: {self._duration_seconds}s | {timestamp}"
+                dwg_left.add(dwg_left.text(info_text, insert=(5, page_height_mm - 5), 
+                                          font_size='8px', fill='gray'))
+                
+                dwg_left.save()
+                print(f"[TRAIL] Exported left hand SVG for Person {stable_id}")
+            
+            # RIGHT HAND SVG
+            right_trail = trail_data['right']
+            if len(right_trail) >= 2:
+                right_file = os.path.join(session_dir, f'person_{stable_id}_right_{timestamp}.svg')
+                
+                dwg_right = svgwrite.Drawing(
+                    right_file, 
+                    size=(f'{page_width_mm}mm', f'{page_height_mm}mm'),
+                    viewBox=f'0 0 {page_width_mm} {page_height_mm}'
+                )
+                
+                # Add background
+                dwg_right.add(dwg_right.rect(
+                    insert=(0, 0), 
+                    size=(page_width_mm, page_height_mm), 
+                    fill='white'
+                ))
+                
+                # Draw right hand trail
+                points = [transform(x, y) for x, y, _ in right_trail]
+                polyline = dwg_right.polyline(points, stroke=color_hex, fill='none', 
+                                              stroke_width=2, stroke_linecap='round')
+                dwg_right.add(polyline)
+                
+                # Add title
+                dwg_right.add(dwg_right.text(f"Person {stable_id} - Right Hand", insert=(5, 10), 
+                                            font_size='10px', fill='black', font_weight='bold'))
+                
+                # Add metadata
+                info_text = f"Duration: {self._duration_seconds}s | {timestamp}"
+                dwg_right.add(dwg_right.text(info_text, insert=(5, page_height_mm - 5), 
+                                            font_size='8px', fill='gray'))
+                
+                dwg_right.save()
+                print(f"[TRAIL] Exported right hand SVG for Person {stable_id}")
+        
+        print(f"[TRAIL] All exports saved to folder: {session_dir}")
         print(f"[TRAIL] Total people: {len(self._trails)}, Total points: {len(all_points)}")
         self._exported = True
     
