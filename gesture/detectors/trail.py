@@ -201,8 +201,8 @@ class TrailDetector:
         
         # FIXED SCALE: Define maximum gesture size in real world (mm)
         # This ensures all exports use the same scale for comparison
-        max_gesture_height_mm = 1500  
-        max_gesture_width_mm = 1500  
+        max_gesture_height_mm = 2000  
+        max_gesture_width_mm = 2000  
         
         # Calculate fixed scale based on fitting max gesture to page
         # Use 90% of page to leave some margin
@@ -254,13 +254,6 @@ class TrailDetector:
             viewBox=f'0 0 {page_width_mm} {page_height_mm}'
         )
         
-        # Add background
-        dwg.add(dwg.rect(
-            insert=(0, 0), 
-            size=(page_width_mm, page_height_mm), 
-            fill='white'
-        ))
-        
         # Draw each person's trails
         for stable_id, trail_data in self._trails.items():
             color = trail_data['color']
@@ -275,8 +268,7 @@ class TrailDetector:
                 if stable_id == 0:
                     print(f"[TRAIL DEBUG] First point: {points[0]}, Last point: {points[-1]}")
                 polyline = dwg.polyline(points, stroke=color_hex, fill='none', 
-                                       stroke_width=2, stroke_linecap='round',
-                                       stroke_dasharray='5,2')  # Dashed for left
+                                       stroke_width=2, stroke_linecap='round')
                 dwg.add(polyline)
             
             # Draw right hand trail
@@ -286,28 +278,6 @@ class TrailDetector:
                 polyline = dwg.polyline(points, stroke=color_hex, fill='none', 
                                        stroke_width=2, stroke_linecap='round')
                 dwg.add(polyline)
-        
-        # Add legend with color coding
-        legend_y = 10
-        dwg.add(dwg.text("Hand Trails - All People", insert=(5, legend_y), 
-                        font_size='10px', fill='black', font_weight='bold'))
-        legend_y += 12
-        dwg.add(dwg.text("Dashed = Left Hand | Solid = Right Hand", 
-                        insert=(5, legend_y), font_size='8px', fill='gray'))
-        
-        # Add color legend for each person
-        legend_y += 15
-        for stable_id, trail_data in self._trails.items():
-            color = trail_data['color']
-            color_hex = '#{:02x}{:02x}{:02x}'.format(
-                int(color[0] * 255), int(color[1] * 255), int(color[2] * 255)
-            )
-            # Draw color square
-            dwg.add(dwg.rect(insert=(5, legend_y - 6), size=(8, 8), fill=color_hex))
-            # Draw person label
-            dwg.add(dwg.text(f"Person {stable_id}", insert=(18, legend_y), 
-                            font_size='8px', fill='black'))
-            legend_y += 12
         
         # Add metadata
         info_text = f"Duration: {self._duration_seconds}s | People: {len(self._trails)} | {timestamp}"
@@ -335,27 +305,11 @@ class TrailDetector:
                     viewBox=f'0 0 {page_width_mm} {page_height_mm}'
                 )
                 
-                # Add background
-                dwg_left.add(dwg_left.rect(
-                    insert=(0, 0), 
-                    size=(page_width_mm, page_height_mm), 
-                    fill='white'
-                ))
-                
                 # Draw left hand trail
                 points = [transform(x, y) for x, y, _ in left_trail]
                 polyline = dwg_left.polyline(points, stroke=color_hex, fill='none', 
                                              stroke_width=2, stroke_linecap='round')
                 dwg_left.add(polyline)
-                
-                # Add title
-                dwg_left.add(dwg_left.text(f"Person {stable_id} - Left Hand", insert=(5, 10), 
-                                          font_size='10px', fill='black', font_weight='bold'))
-                
-                # Add metadata
-                info_text = f"Duration: {self._duration_seconds}s | {timestamp}"
-                dwg_left.add(dwg_left.text(info_text, insert=(5, page_height_mm - 5), 
-                                          font_size='8px', fill='gray'))
                 
                 dwg_left.save()
                 print(f"[TRAIL] Exported left hand SVG for Person {stable_id}")
@@ -371,27 +325,11 @@ class TrailDetector:
                     viewBox=f'0 0 {page_width_mm} {page_height_mm}'
                 )
                 
-                # Add background
-                dwg_right.add(dwg_right.rect(
-                    insert=(0, 0), 
-                    size=(page_width_mm, page_height_mm), 
-                    fill='white'
-                ))
-                
                 # Draw right hand trail
                 points = [transform(x, y) for x, y, _ in right_trail]
                 polyline = dwg_right.polyline(points, stroke=color_hex, fill='none', 
                                               stroke_width=2, stroke_linecap='round')
                 dwg_right.add(polyline)
-                
-                # Add title
-                dwg_right.add(dwg_right.text(f"Person {stable_id} - Right Hand", insert=(5, 10), 
-                                            font_size='10px', fill='black', font_weight='bold'))
-                
-                # Add metadata
-                info_text = f"Duration: {self._duration_seconds}s | {timestamp}"
-                dwg_right.add(dwg_right.text(info_text, insert=(5, page_height_mm - 5), 
-                                            font_size='8px', fill='gray'))
                 
                 dwg_right.save()
                 print(f"[TRAIL] Exported right hand SVG for Person {stable_id}")
