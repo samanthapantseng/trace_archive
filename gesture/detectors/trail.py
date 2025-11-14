@@ -27,7 +27,7 @@ class TrailDetector:
         self._person_mapping = {}  # current_key -> stable_id
         self._next_stable_id = 0
         self._start_time = time.time()
-        self._duration_seconds = 20
+        self._duration_seconds = 100 # 100 seconds recording duration
         self._proximity_threshold = 500.0  # 500mm = 50cm for reappearance matching
         self._exported = False
         self._colors = self._generate_color_palette()

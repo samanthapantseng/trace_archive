@@ -1,55 +1,97 @@
 # Hand Trail Gesture Tracker
 
-Track hand movements in 3D space and export as plottable SVG files.
+Captures hand movements during conversations between two people and exports them as plottable SVG files.
 
-## Quick Start
+## How It Works
 
-### 1. Record & Export
+This system tracks both hands of all people in the camera view, recording their movement trails over time. The trails are then exported as SVG files that can be physically plotted using an AxiDraw plotter.
+
+**Recording Source:**
+
+-   **With live ZED 3D cameras:** Real-time capture of people interacting
+-   **With pre-recorded files:** Playback of `.ssrec` recordings (current workflow)
+
+## Complete Workflow
+
+### Step 1: Run the Tracker
+
 ```bash
 python main.py --rec 'recordings/your_recording.ssrec' --calibration your_calibration
 ```
 
-### 2. Plot
+**What happens:**
+
+-   Opens a 3D visualization window showing skeleton tracking
+-   Records hand movements for **20 seconds** (configurable in `detectors/trail.py` line 30)
+-   Tracks both left and right hands of all people in view
+-   Automatically exports SVG files when recording completes
+
+**Live camera mode (if you have ZED cameras):**
+
+```bash
+python main.py --calibration your_calibration
+# No --rec flag means live camera feed
+```
+
+### Step 2: Generated Files
+
+After 20 seconds, files are automatically saved to:
+
+```
+trails/trail_YYYYMMDD_HHMMSS/
+├── all_trails_YYYYMMDD_HHMMSS.svg        # Preview of all hands (DO NOT PLOT)
+├── person_0_left_YYYYMMDD_HHMMSS.svg     # Individual hand trail (PLOT THIS)
+├── person_0_right_YYYYMMDD_HHMMSS.svg    # Individual hand trail (PLOT THIS)
+├── person_1_left_YYYYMMDD_HHMMSS.svg     # If multiple people detected
+└── person_1_right_YYYYMMDD_HHMMSS.svg    # If multiple people detected
+```
+
+### Step 3: Plot the Trails
+
 ```bash
 ./plot_latest.sh
 ```
 
-Then manually plot each file in Inkscape: Extensions > iDraw > AxiDraw Control > Plot
+**What happens:**
 
-## Files
+1. Script finds the most recent `trails/trail_*` folder
+2. Opens the first individual hand SVG in Inkscape
+3. **You manually:** Go to Extensions > iDraw > AxiDraw Control > Plot
+4. Wait for plotting to complete
+5. Press **Enter** in the terminal
+6. Next file opens automatically
+7. Repeat steps 3-6 for each hand
 
-- **`main.py`** - Main application with visualization
-- **`calibration.py`** - Interactive calibration tool for defining floor polygon
-- **`plot_latest.sh`** - Opens latest SVG files for plotting
-- **`detectors/trail.py`** - Hand tracking and SVG export logic
-- **`PLOTTING_README.md`** - Detailed plotting workflow and troubleshooting
+**Why manual plotting?**  
+Inkscape's command-line interface crashes on macOS when trying to automate the iDraw extension. Manual triggering is the only reliable method.
 
-## Directories
+## Output Details
 
-- **`recordings/`** - ZED camera recordings (.ssrec files)
-- **`calibrations/`** - Saved calibration polygons (.json files)
-- **`trails/`** - Exported SVG files organized by timestamp
+-   **Format:** A5 landscape (210mm × 148mm)
+-   **Scale:** Fixed at 800mm height × 1200mm width (seated arm movement range)
+-   **Duration:** 20 seconds of recording (adjustable)
+-   **One SVG per hand:** Each person's left and right hands get separate files for individual plotting
 
-## Output Structure
+## Files & Directories
 
-```
-trails/trail_YYYYMMDD_HHMMSS/
-├── all_trails_*.svg          # Combined preview (all people, all hands)
-├── person_0_left_*.svg       # Individual hand files for plotting
-├── person_0_right_*.svg      #   (one per hand per person)
-└── ...
-```
+-   **`main.py`** - Main application (live camera or playback mode)
+-   **`calibration.py`** - Tool to define floor polygon for filtering
+-   **`plot_latest.sh`** - Script to sequentially open SVG files for plotting
+-   **`detectors/trail.py`** - Hand tracking logic and SVG export
+-   **`recordings/`** - Pre-recorded ZED camera files (`.ssrec`)
+-   **`calibrations/`** - Saved calibration polygons (`.json`)
+-   **`trails/`** - Exported SVG files organized by timestamp
 
-## Key Features
+## Configuration
 
-- ✅ Fixed scale (800mm × 1200mm) for gesture comparison across sessions
-- ✅ A5 page size (210mm × 148mm landscape) optimized for plotting
-- ✅ Proximity-based skeleton re-identification (handles temporary tracking loss)
-- ✅ Color-coded trails per person
-- ✅ 20-second recording duration (configurable)
+Edit `detectors/trail.py`:
 
-## Notes
+-   **Line 30:** `self._duration_seconds = 20` - Change recording length
+-   **Lines 314-315:** `max_gesture_height_mm` / `max_gesture_width_mm` - Adjust scale
 
-- Only individual hand files (`person_X_left/right_*.svg`) should be plotted
-- The `all_trails_*.svg` is for preview/documentation only
-- Auto-plotting is disabled due to macOS CLI limitations
+## Tips
+
+-   **Preview first:** Open `all_trails_*.svg` to see the combined visualization before plotting
+-   **Multiple people:** Each person gets a unique color and separate SVG files
+-   **Fixed scale:** All sessions use the same scale, making gestures comparable
+-   **Individual plotting:** Plot each hand separately for cleaner results
