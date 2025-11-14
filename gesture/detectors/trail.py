@@ -10,6 +10,7 @@ from senseSpaceLib.senseSpace.vecMathHelper import getPlaneIntersection
 import svgwrite
 import os
 import random
+import subprocess
 
 
 class TrailDetector:
@@ -17,7 +18,6 @@ class TrailDetector:
     Tracks both hands of all users on a vertical plane (wall).
     Handles skeleton disappearance/reappearance by proximity matching.
     Each person gets a unique color.
-    Exports SVG after 60 seconds.
     """
     
     def __init__(self):
@@ -31,6 +31,10 @@ class TrailDetector:
         self._proximity_threshold = 500.0  # 500mm = 50cm for reappearance matching
         self._exported = False
         self._colors = self._generate_color_palette()
+        
+        # Plotter configuration
+        self._send_to_plotter = True  # Set to False to disable automatic plotting
+        self._inkscape_path = "/Applications/Inkscape.app/Contents/MacOS/inkscape"
     
     def _generate_color_palette(self):
         """Generate distinct colors for different people."""
@@ -161,6 +165,48 @@ class TrailDetector:
         glLineWidth(1.0)
         glEnable(GL_DEPTH_TEST)
     
+    def _send_to_plotter(self, svg_file):
+        """Send SVG file to plotter via Inkscape and iDraw extension."""
+        if not self._send_to_plotter:
+            return
+        
+        if not os.path.exists(self._inkscape_path):
+            print(f"[PLOTTER] Inkscape not found at {self._inkscape_path}")
+            return
+        
+        if not os.path.exists(svg_file):
+            print(f"[PLOTTER] SVG file not found: {svg_file}")
+            return
+        
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[PLOTTER] [{timestamp}] Sending to plotter: {os.path.basename(svg_file)}")
+            
+            # Setup environment with proper PATH for Inkscape extensions
+            env = os.environ.copy()
+            env["HOME"] = os.path.expanduser("~")
+            env["PATH"] = "/opt/homebrew/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/usr/local/share/dotnet:~/.dotnet/tools"
+            
+            # Run Inkscape with iDraw extension
+            result = subprocess.run([
+                self._inkscape_path,
+                svg_file,
+                "--batch-process",
+                "--actions=command.idraw2.0-manager.noprefs"
+            ], env=env, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                print(f"[PLOTTER] Successfully sent: {os.path.basename(svg_file)}")
+            else:
+                print(f"[PLOTTER] Error sending to plotter:")
+                if result.stderr:
+                    print(f"[PLOTTER] {result.stderr}")
+                    
+        except subprocess.TimeoutExpired:
+            print(f"[PLOTTER] Timeout sending {os.path.basename(svg_file)}")
+        except Exception as e:
+            print(f"[PLOTTER] Error: {e}")
+    
     def _export_svg(self):
         """Export hand trails to SVG file (A5 size, wall/front view)."""
         if not self._trails or self._exported:
@@ -268,7 +314,7 @@ class TrailDetector:
                 if stable_id == 0:
                     print(f"[TRAIL DEBUG] First point: {points[0]}, Last point: {points[-1]}")
                 polyline = dwg.polyline(points, stroke=color_hex, fill='none', 
-                                       stroke_width=2, stroke_linecap='round')
+                                       stroke_width=1, stroke_linecap='round')
                 dwg.add(polyline)
             
             # Draw right hand trail
@@ -276,7 +322,7 @@ class TrailDetector:
             if len(right_trail) >= 2:
                 points = [transform(x, y) for x, y, _ in right_trail]
                 polyline = dwg.polyline(points, stroke=color_hex, fill='none', 
-                                       stroke_width=2, stroke_linecap='round')
+                                       stroke_width=1, stroke_linecap='round')
                 dwg.add(polyline)
         
         # Add metadata
@@ -308,11 +354,14 @@ class TrailDetector:
                 # Draw left hand trail
                 points = [transform(x, y) for x, y, _ in left_trail]
                 polyline = dwg_left.polyline(points, stroke=color_hex, fill='none', 
-                                             stroke_width=2, stroke_linecap='round')
+                                             stroke_width=1, stroke_linecap='round')
                 dwg_left.add(polyline)
                 
                 dwg_left.save()
                 print(f"[TRAIL] Exported left hand SVG for Person {stable_id}")
+                
+                # Send to plotter
+                self._send_to_plotter(left_file)
             
             # RIGHT HAND SVG
             right_trail = trail_data['right']
@@ -328,11 +377,14 @@ class TrailDetector:
                 # Draw right hand trail
                 points = [transform(x, y) for x, y, _ in right_trail]
                 polyline = dwg_right.polyline(points, stroke=color_hex, fill='none', 
-                                              stroke_width=2, stroke_linecap='round')
+                                              stroke_width=1, stroke_linecap='round')
                 dwg_right.add(polyline)
                 
                 dwg_right.save()
                 print(f"[TRAIL] Exported right hand SVG for Person {stable_id}")
+                
+                # Send to plotter
+                self._send_to_plotter(right_file)
         
         print(f"[TRAIL] All exports saved to folder: {session_dir}")
         print(f"[TRAIL] Total people: {len(self._trails)}, Total points: {len(all_points)}")
