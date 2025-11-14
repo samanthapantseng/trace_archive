@@ -33,7 +33,7 @@ class TrailDetector:
         self._colors = self._generate_color_palette()
         
         # Plotter configuration
-        self._send_to_plotter = True  # Set to False to disable automatic plotting
+        self._plotter_enabled = False  # DISABLED: Use separate plot_svg.py script instead
         self._inkscape_path = "/Applications/Inkscape.app/Contents/MacOS/inkscape"
     
     def _generate_color_palette(self):
@@ -167,7 +167,7 @@ class TrailDetector:
     
     def _send_to_plotter(self, svg_file):
         """Send SVG file to plotter via Inkscape and iDraw extension."""
-        if not self._send_to_plotter:
+        if not self._plotter_enabled:
             return
         
         if not os.path.exists(self._inkscape_path):
@@ -180,30 +180,45 @@ class TrailDetector:
         
         try:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            print(f"[PLOTTER] [{timestamp}] Sending to plotter: {os.path.basename(svg_file)}")
+            print(f"[PLOTTER] [{timestamp}] Queuing for plotter: {os.path.basename(svg_file)}")
             
-            # Setup environment with proper PATH for Inkscape extensions
-            env = os.environ.copy()
-            env["HOME"] = os.path.expanduser("~")
-            env["PATH"] = "/opt/homebrew/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/usr/local/share/dotnet:~/.dotnet/tools"
+            # Write a shell script to execute Inkscape in the background
+            # This avoids fork/exec crashes when calling GUI apps from within GUI contexts
+            script_dir = os.path.join(os.path.dirname(svg_file), '.plotter_queue')
+            os.makedirs(script_dir, exist_ok=True)
             
-            # Run Inkscape with iDraw extension
-            result = subprocess.run([
-                self._inkscape_path,
-                svg_file,
-                "--batch-process",
-                "--actions=command.idraw2.0-manager.noprefs"
-            ], env=env, capture_output=True, text=True, timeout=30)
+            script_file = os.path.join(script_dir, f'plot_{os.path.basename(svg_file)}.sh')
+            svg_file_abs = os.path.abspath(svg_file)
             
-            if result.returncode == 0:
-                print(f"[PLOTTER] Successfully sent: {os.path.basename(svg_file)}")
-            else:
-                print(f"[PLOTTER] Error sending to plotter:")
-                if result.stderr:
-                    print(f"[PLOTTER] {result.stderr}")
+            # Create a shell script that will run Inkscape with proper environment
+            with open(script_file, 'w') as f:
+                f.write('#!/bin/bash\n')
+                f.write(f'# Auto-generated script to plot {os.path.basename(svg_file)}\n')
+                f.write(f'export PATH="/opt/homebrew/bin:/Library/Frameworks/Python.framework/Versions/3.13/bin:/usr/local/bin:$PATH"\n')
+                f.write(f'cd "{os.path.dirname(svg_file_abs)}"\n')
+                f.write(f'"{self._inkscape_path}" "{svg_file_abs}" --batch-process --actions="command.idraw2.0-manager.noprefs" 2>&1 | tee "{script_file}.log"\n')
+                f.write(f'echo "Plot completed at $(date)" >> "{script_file}.log"\n')
+            
+            # Make script executable
+            os.chmod(script_file, 0o755)
+            
+            print(f"[PLOTTER] Created plot script: {script_file}")
+            print(f"[PLOTTER] To plot manually, run: bash {script_file}")
+            print(f"[PLOTTER] Or set _plotter_enabled = False to disable auto-plotting")
+            
+            # Try to execute the script in background (non-blocking)
+            # Using subprocess.Popen with proper detachment
+            subprocess.Popen(
+                ['bash', script_file],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,  # Detach from parent process
+                cwd=os.path.dirname(svg_file_abs)
+            )
+            
+            print(f"[PLOTTER] Launched plotting process in background")
                     
-        except subprocess.TimeoutExpired:
-            print(f"[PLOTTER] Timeout sending {os.path.basename(svg_file)}")
         except Exception as e:
             print(f"[PLOTTER] Error: {e}")
     
